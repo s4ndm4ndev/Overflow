@@ -15,12 +15,29 @@
     <label for="prompts">Prompts <span class="hint">one per line</span></label>
     <textarea id="prompts" placeholder="a red bicycle leaning against a brick wall&#10;a cup of coffee on a wooden desk&#10;..."></textarea>
 
+    <div class="file-upload-row">
+      <label for="prompt-file" class="file-upload-label">Or upload a .txt file</label>
+      <input type="file" id="prompt-file" accept=".txt" class="file-input" />
+    </div>
+
     <div class="row">
-      <label for="delay">Delay between prompts</label>
+      <label>Delay between prompts</label>
       <div class="delay-input">
-        <input type="number" id="delay" min="1" value="15" />
+        <input type="number" id="delay-min" min="1" value="8" />
+        <span>to</span>
+        <input type="number" id="delay-max" min="1" value="20" />
         <span>sec</span>
       </div>
+    </div>
+
+    <div class="row">
+      <label for="auto-download">Auto-download results</label>
+      <input type="checkbox" id="auto-download" class="toggle-checkbox" />
+    </div>
+
+    <div class="folder-field">
+      <label for="download-folder">Download folder <span class="hint">optional subfolder in Downloads</span></label>
+      <input type="text" id="download-folder" placeholder="overflow-batch-1" />
     </div>
 
     <div class="controls">

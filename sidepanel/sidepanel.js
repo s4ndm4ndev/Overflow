@@ -5,7 +5,11 @@
 // waiting for the result before moving on.
 
 const promptsEl = document.getElementById("prompts");
-const delayEl = document.getElementById("delay");
+const promptFileEl = document.getElementById("prompt-file");
+const delayMinEl = document.getElementById("delay-min");
+const delayMaxEl = document.getElementById("delay-max");
+const autoDownloadEl = document.getElementById("auto-download");
+const downloadFolderEl = document.getElementById("download-folder");
 const startBtn = document.getElementById("start");
 const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
@@ -24,21 +28,118 @@ function setStatus(text, mode = "idle") {
   statusDot.className = `dot ${mode}`;
 }
 
+const STATUS_LABELS = {
+  pending: "Pending",
+  running: "Generating…",
+  done: "Done ✓",
+  error: "Error",
+};
+
 function renderQueue() {
   queueListEl.innerHTML = "";
   queue.forEach((item) => {
     const li = document.createElement("li");
+    if (item.status === "running") li.classList.add("active");
     const dot = document.createElement("span");
     dot.className = `status-dot ${item.status}`;
     const text = document.createElement("span");
     text.className = "item-text";
     text.textContent = item.text;
+    const badge = document.createElement("span");
+    badge.className = `status-badge ${item.status}`;
+    badge.textContent = STATUS_LABELS[item.status] || item.status;
     li.appendChild(dot);
     li.appendChild(text);
+    li.appendChild(badge);
     queueListEl.appendChild(li);
   });
   const done = queue.filter((q) => q.status === "done").length;
   queueProgressEl.textContent = `${done} / ${queue.length}`;
+}
+
+/**
+ * Turn prompt text into a filename-safe slug: lowercase, non-alphanumeric
+ * runs collapsed to single hyphens, truncated to ~40 chars at a word
+ * boundary (extending slightly past 40 rather than cutting mid-word).
+ */
+function slugify(text, maxLength = 40) {
+  let slug = text
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (slug.length > maxLength) {
+    let cut = slug.indexOf("-", maxLength);
+    if (cut === -1) cut = slug.length;
+    slug = slug.slice(0, cut);
+  }
+
+  return slug.replace(/-+$/, "");
+}
+
+/**
+ * Strip characters that are invalid in Windows/Unix file paths so a
+ * user-supplied folder name is safe to pass into chrome.downloads.download().
+ */
+function sanitizeFolderName(name) {
+  return name
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
+    .replace(/^\.+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 60);
+}
+
+const CONTENT_TYPE_EXTENSIONS = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+};
+
+function extensionFromContentType(contentType) {
+  return CONTENT_TYPE_EXTENSIONS[contentType] || null;
+}
+
+promptFileEl.addEventListener("change", () => {
+  const file = promptFileEl.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const lines = String(reader.result)
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    promptsEl.value = lines.join("\n");
+  };
+  reader.readAsText(file);
+  promptFileEl.value = ""; // allow re-selecting the same file later
+});
+
+/**
+ * Download a completed result, named "{index}-{slug}.{ext}" inside the
+ * optional user-supplied subfolder. No-ops if there's no data URL yet
+ * (waitForResult() in flow.js is still a stub).
+ */
+function downloadResult(resultData, index) {
+  return new Promise((resolve) => {
+    if (!resultData || !resultData.dataUrl) {
+      resolve();
+      return;
+    }
+
+    const ext = extensionFromContentType(resultData.contentType) || "png"; // TODO: derive real extension
+    const slug = slugify(queue[index].text);
+    const baseName = `${index + 1}-${slug}.${ext}`;
+    const folder = sanitizeFolderName(downloadFolderEl.value);
+    const filename = folder ? `${folder}/${baseName}` : baseName;
+
+    chrome.downloads.download({ url: resultData.dataUrl, filename }, () => resolve());
+  });
 }
 
 function sleep(ms) {
@@ -86,9 +187,15 @@ async function runQueue() {
 
     if (!result.ok) {
       setStatus(`Prompt ${i + 1} failed: ${result.error}`, "error");
+    } else if (autoDownloadEl.checked) {
+      await downloadResult(result.result, i);
     }
 
-    const delaySec = Number(delayEl.value) || 15;
+    let minSec = Number(delayMinEl.value) || 1;
+    let maxSec = Number(delayMaxEl.value) || minSec;
+    if (minSec > maxSec) [minSec, maxSec] = [maxSec, minSec]; // swap rather than error
+
+    const delaySec = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
     await sleep(delaySec * 1000);
   }
 

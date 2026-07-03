@@ -92,6 +92,36 @@ function waitForResult(timeoutMs = 90000) {
 }
 
 /**
+ * Convert a blob: URL into a data: URL.
+ *
+ * Open technical question from the spec, resolved here: Flow's generated
+ * asset is almost certainly a `blob:https://labs.google/...` URL, which is
+ * scoped to this page's context. Two ways to get it downloaded were on the
+ * table:
+ *   1. Fetch the blob here and pass it as a data: URL through the existing
+ *      message relay to wherever chrome.downloads.download() is called.
+ *   2. Call chrome.downloads.download() directly from this content script.
+ * (2) isn't actually possible — chrome.downloads is not exposed to content
+ * script contexts at all, regardless of the "downloads" permission, since
+ * content scripts run in the page's world, not the extension's. So (1) is
+ * the only option: this content script is also the only context that can
+ * resolve the page-scoped blob: URL in the first place. Data URLs are
+ * larger than the original bytes (~33%), but a single generated image is a
+ * few MB at most, well within chrome.runtime message-passing limits.
+ */
+async function blobUrlToDataUrl(blobUrl) {
+  const response = await fetch(blobUrl);
+  const blob = await response.blob();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  return { dataUrl, contentType: blob.type };
+}
+
+/**
  * Run a single prompt end-to-end: fill it in, click generate, wait for result.
  */
 async function runPrompt(text) {
@@ -103,6 +133,16 @@ async function runPrompt(text) {
   if (!clicked) throw new Error("Could not find or click the Generate button.");
 
   const result = await waitForResult();
+
+  // Once waitForResult() is wired up to a real result container, `result.url`
+  // will be a page-scoped blob: URL — convert it so the side panel can
+  // actually download it (see blobUrlToDataUrl() above). Left as a no-op
+  // while waitForResult() is still a stub returning { url: null }.
+  if (result && result.url && result.url.startsWith("blob:")) {
+    const { dataUrl, contentType } = await blobUrlToDataUrl(result.url);
+    return { ...result, dataUrl, contentType };
+  }
+
   return result;
 }
 
