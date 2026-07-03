@@ -18,107 +18,159 @@
 //      below for the pattern.
 
 /**
- * Find the prompt textarea/input on the page.
- * TODO: inspect the real page and replace this selector.
- * Look for: a <textarea> or contenteditable div, likely with a
- * placeholder like "Describe your image..." — check aria-label first.
+ * Find the prompt composer on the page.
+ * This is a Slate.js rich-text editor, not a <textarea> — confirmed via
+ * live inspection. `data-slate-editor` is an attribute Slate itself adds
+ * to the DOM (not a generated class), so it's stable across Flow's builds.
  */
 function findPromptInput() {
-  // Placeholder guess — almost certainly wrong, needs real inspection.
-  return document.querySelector('textarea[aria-label*="prompt" i], textarea[placeholder]');
+  return document.querySelector('[data-slate-editor="true"][role="textbox"]');
 }
 
 /**
- * Find the "Generate" button.
- * TODO: inspect the real page. Look for a <button> with an accessible
- * name of "Generate" (check aria-label or visible text), not a CSS class.
+ * Find the submit button next to the prompt composer.
+ * Flow's button currently has the accessible name "Create" (in a visually-
+ * hidden span) plus an icon-font ligature — not "Generate", and matching on
+ * that label is risky anyway since it already differs from what the spec
+ * assumed and could change again. Instead, walk up from the prompt input to
+ * the nearest ancestor that also contains a <button>: that's the shared
+ * composer toolbar, regardless of what the button is labeled.
  */
 function findGenerateButton() {
-  const buttons = Array.from(document.querySelectorAll("button"));
-  return buttons.find((b) => /generate/i.test(b.textContent || b.getAttribute("aria-label") || ""));
+  const input = findPromptInput();
+  if (!input) return null;
+  let container = input.parentElement;
+  while (container) {
+    const button = container.querySelector("button");
+    if (button) return button;
+    container = container.parentElement;
+  }
+  return null;
 }
 
 /**
- * Set the prompt text in a way React will actually register.
- * This part is NOT a guess — this pattern is required for any React-
- * controlled input, regardless of what Flow's specific selectors turn
- * out to be. Keep this as-is.
+ * Set the prompt text in a way Slate will actually register.
+ * Slate manages its own internal document model and only reacts to real
+ * `beforeinput` events (via its DOM event listeners) — plain textContent
+ * assignment or a synthetic `input` event dispatch is invisible to it.
+ * `execCommand("insertText", ...)` is the standard trick for this: it
+ * drives the same native insertion pipeline as actual typing/pasting, so
+ * Slate's beforeinput handler picks it up correctly.
  */
 function setPromptText(inputEl, text) {
-  const nativeSetter = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype,
-    "value"
-  ).set;
-  nativeSetter.call(inputEl, text);
-  inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+  inputEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(inputEl);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.execCommand("insertText", false, text);
+}
+
+function isButtonDisabled(btn) {
+  return btn.disabled || btn.getAttribute("aria-disabled") === "true";
 }
 
 /**
- * Click generate.
+ * The submit button starts aria-disabled until Flow's React state notices
+ * the composer has text, which may lag a tick behind the input event —
+ * poll briefly instead of assuming it's already enabled.
  */
-function clickGenerate() {
-  const btn = findGenerateButton();
-  if (!btn) return false;
-  btn.click();
-  return true;
+function waitForButtonEnabled(btn, timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    if (!isButtonDisabled(btn)) {
+      resolve(true);
+      return;
+    }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (!isButtonDisabled(btn)) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(interval);
+        resolve(false);
+      }
+    }, 50);
+  });
 }
 
 /**
- * Watch the page for a newly-finished generation (new thumbnail/result
- * appearing), and resolve with info about it.
- * TODO: this needs the real container selector for the results gallery,
- * found by inspecting the page while a generation completes.
+ * A tile counts as finished once it has a link into its own edit page
+ * (`href` containing "/edit/<asset-id>"). Confirmed via live inspection of
+ * the SAME tile-id at two points in time: while generating, its wrapper div
+ * has inline style `opacity: 0; --blur-amount: 80px` (blurred placeholder)
+ * and no such link; once done, that becomes `opacity: 1; --blur-amount: 0px`
+ * and the edit link appears. The tile DOM node itself exists immediately
+ * when generation starts (not just once finished), so tile *creation* is
+ * NOT a valid completion signal — only the edit link is.
+ */
+function tileHasFinished(tileEl) {
+  return !!tileEl.querySelector('a[href*="/edit/"]');
+}
+
+function getFinishedTileIds(container) {
+  return new Set(
+    Array.from(container.querySelectorAll("[data-tile-id]"))
+      .filter(tileHasFinished)
+      .map((el) => el.getAttribute("data-tile-id"))
+  );
+}
+
+/**
+ * Watch the results gallery for a tile transitioning into the finished
+ * state described above, ignoring any tile that was already finished
+ * before this generation started.
  */
 function waitForResult(timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
+    const container = document.querySelector('[data-testid="virtuoso-item-list"]');
+    if (!container) {
+      reject(new Error("Could not find the results gallery on the page."));
+      return;
+    }
+
+    const alreadyFinished = getFinishedTileIds(container);
+
     const timeout = setTimeout(() => {
       observer.disconnect();
       reject(new Error("Timed out waiting for generation result."));
     }, timeoutMs);
 
     const observer = new MutationObserver(() => {
-      // TODO: replace with a real check — e.g. a new <img> or <video>
-      // appearing inside the results gallery container.
-      const done = false; // placeholder
-      if (done) {
+      const newlyFinished = Array.from(container.querySelectorAll("[data-tile-id]")).find(
+        (el) => !alreadyFinished.has(el.getAttribute("data-tile-id")) && tileHasFinished(el)
+      );
+      if (newlyFinished) {
         clearTimeout(timeout);
         observer.disconnect();
-        resolve({ url: null }); // TODO: extract the actual asset URL
+        resolve(extractResult(newlyFinished));
       }
     });
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(container, { childList: true, subtree: true, attributes: true });
   });
 }
 
 /**
- * Convert a blob: URL into a data: URL.
+ * Pull the downloadable URL out of a finished tile.
  *
- * Open technical question from the spec, resolved here: Flow's generated
- * asset is almost certainly a `blob:https://labs.google/...` URL, which is
- * scoped to this page's context. Two ways to get it downloaded were on the
- * table:
- *   1. Fetch the blob here and pass it as a data: URL through the existing
- *      message relay to wherever chrome.downloads.download() is called.
- *   2. Call chrome.downloads.download() directly from this content script.
- * (2) isn't actually possible — chrome.downloads is not exposed to content
- * script contexts at all, regardless of the "downloads" permission, since
- * content scripts run in the page's world, not the extension's. So (1) is
- * the only option: this content script is also the only context that can
- * resolve the page-scoped blob: URL in the first place. Data URLs are
- * larger than the original bytes (~33%), but a single generated image is a
- * few MB at most, well within chrome.runtime message-passing limits.
+ * Confirmed via live inspection: the asset is a plain same-origin URL
+ * (`/fxapi/trpc/media.getMediaUrlRedirect?name=<id>`) rendered straight into
+ * an <img> (or presumably <video>) tag — NOT a page-scoped `blob:` URL, which
+ * was the original assumption before inspecting the real DOM. That means
+ * `chrome.downloads.download()` can fetch it directly using the browser's
+ * own cookies; there's no need to fetch the bytes here and smuggle them
+ * through chrome.runtime messaging as a data: URL.
  */
-async function blobUrlToDataUrl(blobUrl) {
-  const response = await fetch(blobUrl);
-  const blob = await response.blob();
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-  return { dataUrl, contentType: blob.type };
+function extractResult(tileEl) {
+  const media = tileEl.querySelector("img, video");
+  if (!media) return { url: null, tileId: tileEl.getAttribute("data-tile-id") };
+  return {
+    url: media.currentSrc || media.src,
+    mediaType: media.tagName.toLowerCase(), // "img" or "video"
+    tileId: tileEl.getAttribute("data-tile-id"),
+  };
 }
 
 /**
@@ -129,21 +181,13 @@ async function runPrompt(text) {
   if (!input) throw new Error("Could not find the prompt input on the page.");
   setPromptText(input, text);
 
-  const clicked = clickGenerate();
-  if (!clicked) throw new Error("Could not find or click the Generate button.");
+  const btn = findGenerateButton();
+  if (!btn) throw new Error("Could not find the Generate button.");
+  const enabled = await waitForButtonEnabled(btn);
+  if (!enabled) throw new Error("Generate button stayed disabled after entering the prompt.");
+  btn.click();
 
-  const result = await waitForResult();
-
-  // Once waitForResult() is wired up to a real result container, `result.url`
-  // will be a page-scoped blob: URL — convert it so the side panel can
-  // actually download it (see blobUrlToDataUrl() above). Left as a no-op
-  // while waitForResult() is still a stub returning { url: null }.
-  if (result && result.url && result.url.startsWith("blob:")) {
-    const { dataUrl, contentType } = await blobUrlToDataUrl(result.url);
-    return { ...result, dataUrl, contentType };
-  }
-
-  return result;
+  return waitForResult();
 }
 
 // Listen for commands from the side panel (relayed via background.js).
