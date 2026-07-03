@@ -16,5 +16,5 @@ npm-debug.log*
 *.pem
 *.zip
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code / AI tooling
+.claude/
