@@ -91,19 +91,6 @@ function sanitizeFolderName(name) {
     .slice(0, 60);
 }
 
-const CONTENT_TYPE_EXTENSIONS = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "video/mp4": "mp4",
-  "video/webm": "webm",
-};
-
-function extensionFromContentType(contentType) {
-  return CONTENT_TYPE_EXTENSIONS[contentType] || null;
-}
-
 promptFileEl.addEventListener("change", () => {
   const file = promptFileEl.files[0];
   if (!file) return;
@@ -122,23 +109,27 @@ promptFileEl.addEventListener("change", () => {
 
 /**
  * Download a completed result, named "{index}-{slug}.{ext}" inside the
- * optional user-supplied subfolder. No-ops if there's no data URL yet
- * (waitForResult() in flow.js is still a stub).
+ * optional user-supplied subfolder. No-ops if there's no result URL.
+ *
+ * The URL from flow.js is a normal same-origin URL (not a page-scoped
+ * blob: URL), so chrome.downloads.download() can fetch it directly using
+ * the browser's own cookies — no need to pass image bytes through
+ * chrome.runtime messaging.
  */
 function downloadResult(resultData, index) {
   return new Promise((resolve) => {
-    if (!resultData || !resultData.dataUrl) {
+    if (!resultData || !resultData.url) {
       resolve();
       return;
     }
 
-    const ext = extensionFromContentType(resultData.contentType) || "png"; // TODO: derive real extension
+    const ext = resultData.mediaType === "video" ? "mp4" : "png";
     const slug = slugify(queue[index].text);
     const baseName = `${index + 1}-${slug}.${ext}`;
     const folder = sanitizeFolderName(downloadFolderEl.value);
     const filename = folder ? `${folder}/${baseName}` : baseName;
 
-    chrome.downloads.download({ url: resultData.dataUrl, filename }, () => resolve());
+    chrome.downloads.download({ url: resultData.url, filename }, () => resolve());
   });
 }
 
@@ -154,6 +145,23 @@ function sendToContent(type, payload) {
   });
 }
 
+/**
+ * Poll for a live Flow tab so the status bar reflects reality instead of
+ * showing its static "Idle" placeholder forever. Skipped while a queue is
+ * running so it doesn't clobber the in-progress status text.
+ */
+async function checkFlowTab() {
+  if (running) return;
+  const ping = await sendToContent("PING");
+  setStatus(
+    ping.ok ? "Flow tab detected — ready to start." : ping.error || "No Flow tab found — open a Flow project tab.",
+    ping.ok ? "idle" : "error"
+  );
+}
+
+checkFlowTab();
+setInterval(checkFlowTab, 3000);
+
 async function runQueue() {
   running = true;
   paused = false;
@@ -163,7 +171,7 @@ async function runQueue() {
 
   const ping = await sendToContent("PING");
   if (!ping.ok) {
-    setStatus("No Flow tab found — open a Flow project first.", "error");
+    setStatus(ping.error || "No Flow tab found — open a Flow project first.", "error");
     resetControls();
     return;
   }
