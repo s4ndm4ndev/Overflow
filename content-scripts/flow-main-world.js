@@ -40,10 +40,26 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Tracks the most recent SET_PROMPT_TEXT request. The isolated-world side
+// times out and gives up on a request after 30s (see setPromptText() in
+// flow.js), but nothing was stopping THIS loop from continuing to run after
+// that — confirmed live: typing kept visibly happening well after the queue
+// had already reported prompts as errored. If the queue then moved on to the
+// next prompt while an old, abandoned loop was still mid-typing, both loops
+// would call editor.insertText() on the same document concurrently,
+// corrupting whatever the composer ends up containing. Every await point
+// below re-checks this against the request's own id and bails out silently
+// (no postMessage back — nothing is listening for a superseded request
+// anyway) the moment a newer request has taken over.
+let activeRequestId = null;
+
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const message = event.data;
   if (!message || message.source !== "overflow-isolated" || message.type !== "SET_PROMPT_TEXT") return;
+
+  const requestId = message.requestId;
+  activeRequestId = requestId;
 
   (async () => {
     let result;
@@ -60,15 +76,19 @@ window.addEventListener("message", (event) => {
       editor.select({ anchor: editor.start([]), focus: editor.end([]) });
       const words = message.text.split(" ");
       for (let i = 0; i < words.length; i++) {
+        if (activeRequestId !== requestId) return; // superseded — abandon without touching the editor further
         editor.insertText((i === 0 ? "" : " ") + words[i]);
         await sleep(160 + Math.random() * 220);
       }
+      if (activeRequestId !== requestId) return;
 
       result = { ok: true };
     } catch (err) {
       result = { ok: false, error: err.message };
     }
 
-    window.postMessage({ source: "overflow-main-world", requestId: message.requestId, ...result }, "*");
+    if (activeRequestId === requestId) {
+      window.postMessage({ source: "overflow-main-world", requestId: message.requestId, ...result }, "*");
+    }
   })();
 });
