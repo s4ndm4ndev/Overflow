@@ -76,14 +76,19 @@ function setPromptText(text) {
   return new Promise((resolve, reject) => {
     const requestId = `${Date.now()}-${Math.random()}`;
 
-    // Generous ceiling: the main-world script now types word-by-word with a
-    // small per-word pause (see flow-main-world.js) rather than inserting
-    // the whole prompt instantly, so long prompts legitimately take a few
-    // seconds.
+    // The main-world script types word-by-word with a per-word pause (see
+    // flow-main-world.js), so the ceiling has to scale with prompt length
+    // rather than being a fixed guess — a fixed 30s was tight enough that a
+    // longer prompt (or a throttled background tab, where Chrome slows down
+    // setTimeout) could still legitimately blow past it. Budget generously
+    // per word (well above the ~380ms max per-word delay) plus a flat
+    // buffer for throttling/overhead, floored at 30s for short prompts.
+    const wordCount = text.split(" ").length;
+    const timeoutMs = Math.max(30000, wordCount * 500 + 10000);
     const timeout = setTimeout(() => {
       window.removeEventListener("message", onMessage);
       reject(new Error("Timed out waiting for the prompt composer to update."));
-    }, 30000);
+    }, timeoutMs);
 
     function onMessage(event) {
       if (event.source !== window) return;
@@ -105,26 +110,36 @@ function isButtonDisabled(btn) {
 }
 
 /**
- * The submit button starts aria-disabled until Flow's React state notices
- * the composer has text, which may lag a tick behind the input event —
- * poll briefly instead of assuming it's already enabled.
+ * Poll until a freshly-located Generate button reports enabled, and resolve
+ * with that fresh reference — never a cached one.
+ *
+ * Confirmed live: the composer visibly grows into a tall multi-line block as
+ * a long prompt lands, which is enough layout change for React to swap out
+ * the button's DOM node entirely. A single button reference captured once
+ * and reused later can go stale — and a detached node's
+ * getBoundingClientRect() silently returns an all-zero rect rather than
+ * throwing, which would aim a click at (0,0) instead of erroring. Symptom
+ * matched exactly: chrome.debugger reported success (banner shown, no
+ * console error) but the composer sat untouched afterward. Re-finding the
+ * button on every poll (and again immediately before the actual click, in
+ * clickGenerateButton()) avoids ever acting on a stale reference.
  */
-function waitForButtonEnabled(btn, timeoutMs = 2000) {
+function waitForGenerateButtonReady(timeoutMs = 2000) {
   return new Promise((resolve) => {
-    if (!isButtonDisabled(btn)) {
-      resolve(true);
-      return;
-    }
     const start = Date.now();
-    const interval = setInterval(() => {
-      if (!isButtonDisabled(btn)) {
-        clearInterval(interval);
-        resolve(true);
-      } else if (Date.now() - start > timeoutMs) {
-        clearInterval(interval);
-        resolve(false);
+    const check = () => {
+      const btn = findGenerateButton();
+      if (btn && !isButtonDisabled(btn)) {
+        resolve(btn);
+        return;
       }
-    }, 50);
+      if (Date.now() - start > timeoutMs) {
+        resolve(null);
+        return;
+      }
+      setTimeout(check, 50);
+    };
+    check();
   });
 }
 
@@ -210,6 +225,12 @@ function extractResult(tileEl) {
   };
 }
 
+function sendToBackground(type, payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ target: "background", type, payload }, resolve);
+  });
+}
+
 /**
  * Click the Generate button via a genuinely trusted click, dispatched from
  * background.js over the Chrome DevTools Protocol.
@@ -220,20 +241,45 @@ function extractResult(tileEl) {
  * a synthetic Enter keydown on the composer — all silently did nothing. The
  * most likely explanation is that Flow deliberately gates the actual
  * generate action behind `isTrusted` input, since it's a real compute cost
- * per click — a reasonable anti-automation measure. `chrome.debugger` is the
- * only thing that reproduced a click Flow actually acted on, so it's used
- * here for just this one step (attach, one click, detach immediately) rather
- * than for the whole interaction.
+ * per click — a reasonable anti-automation measure.
+ *
+ * Attach, measure, click, detach — IN THAT ORDER. An earlier version
+ * measured the button's position first and attached+clicked afterward;
+ * that silently failed every time on long prompts, because
+ * chrome.debugger.attach() triggers Chrome's "is debugging this browser"
+ * infobar, which reflows the entire page down by its own height (confirmed
+ * by comparing screenshots taken right before/after it appears). Measuring
+ * before attaching captures coordinates that are already wrong by the time
+ * the click actually dispatches. Re-locating the button fresh here (rather
+ * than accepting a passed-in reference) also avoids relying on a reference
+ * that might have gone stale for unrelated reasons — see
+ * waitForGenerateButtonReady() above.
  */
-async function clickGenerateButton(btn) {
-  const rect = btn.getBoundingClientRect();
-  const x = rect.left + rect.width / 2;
-  const y = rect.top + rect.height / 2;
-  const response = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ target: "background", type: "DEBUGGER_CLICK", payload: { x, y } }, resolve);
-  });
-  if (!response || !response.ok) {
-    throw new Error((response && response.error) || "Failed to click the Generate button.");
+async function clickGenerateButton() {
+  const attachResponse = await sendToBackground("DEBUGGER_ATTACH");
+  if (!attachResponse || !attachResponse.ok) {
+    throw new Error((attachResponse && attachResponse.error) || "Failed to attach debugger.");
+  }
+
+  try {
+    // Let the infobar's reflow fully settle before measuring anything.
+    await sleep(150);
+
+    const btn = findGenerateButton();
+    if (!btn) throw new Error("Could not find the Generate button.");
+    const rect = btn.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      throw new Error("Generate button has no visible size — likely detached from the page.");
+    }
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    const clickResponse = await sendToBackground("DEBUGGER_CLICK", { x, y });
+    if (!clickResponse || !clickResponse.ok) {
+      throw new Error((clickResponse && clickResponse.error) || "Failed to click the Generate button.");
+    }
+  } finally {
+    await sendToBackground("DEBUGGER_DETACH");
   }
 }
 
@@ -249,10 +295,8 @@ async function runPrompt(text) {
   if (!input) throw new Error("Could not find the prompt input on the page.");
   await setPromptText(text);
 
-  const btn = findGenerateButton();
-  if (!btn) throw new Error("Could not find the Generate button.");
-  const enabled = await waitForButtonEnabled(btn);
-  if (!enabled) throw new Error("Generate button stayed disabled after entering the prompt.");
+  const ready = await waitForGenerateButtonReady();
+  if (!ready) throw new Error("Generate button never became available after entering the prompt.");
 
   // The text lands and the button enables in a single tick — instant,
   // machine-speed, back-to-back with filling the composer. Add a short
@@ -260,7 +304,7 @@ async function runPrompt(text) {
   // it before hitting generate, rather than clicking the literal instant
   // the field allows it.
   await sleep(600 + Math.random() * 1200);
-  await clickGenerateButton(btn);
+  await clickGenerateButton();
 
   return waitForResult();
 }

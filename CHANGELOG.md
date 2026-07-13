@@ -7,6 +7,30 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-13 — Fixed the debugger click landing on nothing
+
+- Root cause of "text types fine, but nothing ever submits or generates,"
+  found by comparing screenshots before/after `chrome.debugger.attach()`:
+  attaching triggers Chrome's "is debugging this browser" infobar, which
+  reflows the *entire page* down by its own height. `clickGenerateButton()`
+  was measuring the button's coordinates *before* requesting the attach+
+  click, so by the time the click actually dispatched, the page had already
+  shifted and the click landed ~30-40px above the real button — no error,
+  since the debugger commands themselves succeeded, just clicking nothing.
+  Fixed by splitting the previously-atomic attach/click/detach into three
+  separate steps (`DEBUGGER_ATTACH`, `DEBUGGER_CLICK`, `DEBUGGER_DETACH`) so
+  the content script can measure the button *after* attaching and the
+  reflow has settled, not before.
+- Along the way, also fixed a real (if secondary) bug: `setPromptText()`'s
+  fixed 30s timeout didn't scale with prompt length, and slow/detailed
+  prompts (~100+ words) at the new human-like typing pace could legitimately
+  take longer than that — timing out and reporting "error" while the
+  now-orphaned typing loop in `flow-main-world.js` kept running unseen in
+  the background, sometimes overlapping with the next prompt's typing and
+  corrupting the editor. Fixed the timeout to scale with word count, and
+  added a request-id guard in `flow-main-world.js` so a superseded typing
+  loop bails out instead of continuing to mutate the editor.
+
 ## 2026-07-13 — Real Flow page automation (working, needs polish)
 
 - Discovered Flow's Generate button ignores every synthetic click a content
