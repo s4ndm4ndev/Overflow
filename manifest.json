@@ -4,7 +4,7 @@
   "short_name": "Overflow",
   "version": "0.1.0",
   "description": "Free bulk prompt automation for Google Flow. Queue prompts, generate in bulk, download the results.",
-  "permissions": ["storage", "downloads", "sidePanel", "scripting", "activeTab"],
+  "permissions": ["storage", "downloads", "sidePanel", "scripting", "activeTab", "debugger"],
   "host_permissions": ["https://labs.google/*"],
   "background": {
     "service_worker": "background.js"
@@ -20,6 +20,12 @@
       "matches": ["https://labs.google/fx/*"],
       "js": ["content-scripts/flow.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://labs.google/fx/*"],
+      "js": ["content-scripts/flow-main-world.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ],
   "icons": {

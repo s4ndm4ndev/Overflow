@@ -163,6 +163,32 @@ textarea:focus, input:focus {
   cursor: pointer;
 }
 
+.hint-banner {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.link-button {
+  display: block;
+  flex: none;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .folder-field {
   margin-top: 12px;
 }
@@ -180,8 +206,14 @@ textarea:focus, input:focus {
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.controls button {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 0;
 }
 
 button {

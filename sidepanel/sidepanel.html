@@ -35,6 +35,12 @@
       <input type="checkbox" id="auto-download" class="toggle-checkbox" />
     </div>
 
+    <div id="download-settings-hint" class="hint-banner" hidden>
+      If Chrome is set to "Ask where to save each file," every download will
+      pause the queue waiting for a manual click.
+      <button type="button" id="open-download-settings" class="link-button">Check Chrome's download settings</button>
+    </div>
+
     <div class="folder-field">
       <label for="download-folder">Download folder <span class="hint">optional subfolder in Downloads</span></label>
       <input type="text" id="download-folder" placeholder="overflow-batch-1" />
@@ -44,6 +50,7 @@
       <button id="start" class="primary">Start queue</button>
       <button id="pause" class="secondary" disabled>Pause</button>
       <button id="stop" class="secondary" disabled>Stop</button>
+      <button id="clear" class="secondary">Clear queue</button>
     </div>
   </section>
 

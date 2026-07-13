@@ -9,10 +9,13 @@ const promptFileEl = document.getElementById("prompt-file");
 const delayMinEl = document.getElementById("delay-min");
 const delayMaxEl = document.getElementById("delay-max");
 const autoDownloadEl = document.getElementById("auto-download");
+const downloadSettingsHintEl = document.getElementById("download-settings-hint");
+const openDownloadSettingsBtn = document.getElementById("open-download-settings");
 const downloadFolderEl = document.getElementById("download-folder");
 const startBtn = document.getElementById("start");
 const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
+const clearBtn = document.getElementById("clear");
 const queueListEl = document.getElementById("queue-list");
 const queueProgressEl = document.getElementById("queue-progress");
 const statusDot = document.getElementById("status-dot");
@@ -115,6 +118,14 @@ promptFileEl.addEventListener("change", () => {
  * blob: URL), so chrome.downloads.download() can fetch it directly using
  * the browser's own cookies — no need to pass image bytes through
  * chrome.runtime messaging.
+ *
+ * There's no extension API to read Chrome's "Ask where to save each file"
+ * setting, and if it's on, Chrome shows a native Save-As dialog per
+ * download regardless of the saveAs:false passed here — chrome.downloads
+ * .download()'s callback then won't fire until the user responds to it,
+ * which would otherwise stall the entire queue indefinitely on the first
+ * download. Give it a window to complete normally, then move on rather than
+ * hang forever.
  */
 function downloadResult(resultData, index) {
   return new Promise((resolve) => {
@@ -129,9 +140,35 @@ function downloadResult(resultData, index) {
     const folder = sanitizeFolderName(downloadFolderEl.value);
     const filename = folder ? `${folder}/${baseName}` : baseName;
 
-    chrome.downloads.download({ url: resultData.url, filename }, () => resolve());
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const timeout = setTimeout(() => {
+      setStatus(
+        'Download is waiting on a Save dialog — check for it, or disable "Ask where to save each file" in Chrome\'s downloads settings.',
+        "error"
+      );
+      settle();
+    }, 8000);
+
+    chrome.downloads.download({ url: resultData.url, filename, saveAs: false }, () => {
+      clearTimeout(timeout);
+      settle();
+    });
   });
 }
+
+autoDownloadEl.addEventListener("change", () => {
+  downloadSettingsHintEl.hidden = !autoDownloadEl.checked;
+});
+
+openDownloadSettingsBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: "chrome://settings/downloads" });
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -162,12 +199,37 @@ async function checkFlowTab() {
 checkFlowTab();
 setInterval(checkFlowTab, 3000);
 
+/**
+ * Wait the configured (randomized) delay before the next prompt, ticking
+ * the status text down every second so the pause is actually visible
+ * instead of looking like nothing is happening between prompts.
+ */
+async function delayWithCountdown() {
+  let minSec = Number(delayMinEl.value) || 1;
+  let maxSec = Number(delayMaxEl.value) || minSec;
+  if (minSec > maxSec) [minSec, maxSec] = [maxSec, minSec]; // swap rather than error
+
+  const delaySec = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
+
+  for (let remaining = delaySec; remaining > 0; remaining--) {
+    if (!running) break;
+    while (paused) {
+      await sleep(300);
+      if (!running) break;
+    }
+    if (!running) break;
+    setStatus(`Next prompt in ${remaining}s...`, "idle");
+    await sleep(1000);
+  }
+}
+
 async function runQueue() {
   running = true;
   paused = false;
   startBtn.disabled = true;
   pauseBtn.disabled = false;
   stopBtn.disabled = false;
+  clearBtn.disabled = true;
 
   const ping = await sendToContent("PING");
   if (!ping.ok) {
@@ -184,6 +246,8 @@ async function runQueue() {
     }
     if (!running) break;
 
+    if (queue[i].status === "done") continue; // already completed in a prior run
+
     currentIndex = i;
     queue[i].status = "running";
     renderQueue();
@@ -199,16 +263,22 @@ async function runQueue() {
       await downloadResult(result.result, i);
     }
 
-    let minSec = Number(delayMinEl.value) || 1;
-    let maxSec = Number(delayMaxEl.value) || minSec;
-    if (minSec > maxSec) [minSec, maxSec] = [maxSec, minSec]; // swap rather than error
-
-    const delaySec = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
-    await sleep(delaySec * 1000);
+    // No point counting down a delay after the last prompt, or if every
+    // remaining item is already done (e.g. resuming a queue that only had
+    // one item left).
+    const hasMoreWork = queue.slice(i + 1).some((item) => item.status !== "done");
+    if (running && hasMoreWork) {
+      await delayWithCountdown();
+    }
   }
 
   if (running) {
-    setStatus("Queue complete.", "idle");
+    // Ran to natural completion (as opposed to being stopped partway) —
+    // clear the queue so the next "Start queue" click loads a fresh batch
+    // from the textarea instead of silently re-running the same one.
+    queue = [];
+    renderQueue();
+    setStatus("Queue complete. Add new prompts to start again.", "idle");
   }
   resetControls();
 }
@@ -219,21 +289,36 @@ function resetControls() {
   startBtn.disabled = false;
   pauseBtn.disabled = true;
   stopBtn.disabled = true;
+  clearBtn.disabled = false;
   pauseBtn.textContent = "Pause";
 }
 
 startBtn.addEventListener("click", () => {
-  const lines = promptsEl.value
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  // If the current queue still has unfinished items (stopped partway
+  // through, or a prompt errored out), resume it in place rather than
+  // rebuilding from the textarea and losing track of what's already done.
+  // Only load a fresh queue from the textarea once everything in the
+  // current one is done (or there's no queue yet).
+  const hasUnfinishedWork = queue.length > 0 && queue.some((item) => item.status !== "done");
 
-  if (lines.length === 0) {
-    setStatus("Add at least one prompt first.", "error");
-    return;
+  if (hasUnfinishedWork) {
+    queue.forEach((item) => {
+      if (item.status !== "done") item.status = "pending";
+    });
+  } else {
+    const lines = promptsEl.value
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      setStatus("Add at least one prompt first.", "error");
+      return;
+    }
+
+    queue = lines.map((text) => ({ text, status: "pending" }));
   }
 
-  queue = lines.map((text) => ({ text, status: "pending" }));
   renderQueue();
   runQueue();
 });
@@ -248,4 +333,10 @@ stopBtn.addEventListener("click", () => {
   running = false;
   setStatus("Stopped.", "idle");
   resetControls();
+});
+
+clearBtn.addEventListener("click", () => {
+  queue = [];
+  renderQueue();
+  setStatus("Queue cleared.", "idle");
 });

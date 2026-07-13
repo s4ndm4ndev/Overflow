@@ -29,42 +29,75 @@ function findPromptInput() {
 
 /**
  * Find the submit button next to the prompt composer.
- * Flow's button currently has the accessible name "Create" (in a visually-
- * hidden span) plus an icon-font ligature — not "Generate", and matching on
- * that label is risky anyway since it already differs from what the spec
- * assumed and could change again. Instead, walk up from the prompt input to
- * the nearest ancestor that also contains a <button>: that's the shared
- * composer toolbar, regardless of what the button is labeled.
+ * The composer toolbar actually has four buttons (attach-media "+", "Agent",
+ * a model picker, and the real submit arrow) — confirmed via live inspection.
+ * The previous version of this function grabbed the *first* <button> found
+ * while walking up from the input, which is the "+" attach button, not
+ * submit; clicking it does nothing visible, which is why prompts appeared to
+ * "submit" but never generated anything. Worse, the "+" button and the real
+ * submit button share the exact same visually-hidden "Create" accessible
+ * name, so matching on that label doesn't disambiguate them either. The
+ * reliable identifier is the submit button's icon-font ligature
+ * ("arrow_forward", a Google Material Symbols name — stable, unlike the
+ * generated CSS classes).
  */
 function findGenerateButton() {
   const input = findPromptInput();
   if (!input) return null;
   let container = input.parentElement;
   while (container) {
-    const button = container.querySelector("button");
-    if (button) return button;
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const submit = buttons.find((b) => {
+      const icon = b.querySelector("i");
+      return icon && icon.textContent.trim() === "arrow_forward";
+    });
+    if (submit) return submit;
     container = container.parentElement;
   }
   return null;
 }
 
 /**
- * Set the prompt text in a way Slate will actually register.
- * Slate manages its own internal document model and only reacts to real
- * `beforeinput` events (via its DOM event listeners) — plain textContent
- * assignment or a synthetic `input` event dispatch is invisible to it.
- * `execCommand("insertText", ...)` is the standard trick for this: it
- * drives the same native insertion pipeline as actual typing/pasting, so
- * Slate's beforeinput handler picks it up correctly.
+ * Ask the main-world bridge script (content-scripts/flow-main-world.js) to
+ * set the prompt text, and wait for its response.
+ *
+ * This can't be done directly from here: content scripts run in an
+ * "isolated world" that does NOT see expando properties — like React's
+ * __reactFiber$<hash> — that the page's own scripts attach to DOM nodes.
+ * Confirmed via live diagnostics: reading that property from here returned
+ * nothing, even though the identical check reliably found it every time
+ * when run from the page's own console. The main-world script does the
+ * actual Slate editor manipulation (see its comments for the full
+ * reasoning); this just relays the request and response over
+ * window.postMessage, since a MAIN-world script has no access to
+ * chrome.runtime to reply any other way.
  */
-function setPromptText(inputEl, text) {
-  inputEl.focus();
-  const range = document.createRange();
-  range.selectNodeContents(inputEl);
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-  document.execCommand("insertText", false, text);
+function setPromptText(text) {
+  return new Promise((resolve, reject) => {
+    const requestId = `${Date.now()}-${Math.random()}`;
+
+    // Generous ceiling: the main-world script now types word-by-word with a
+    // small per-word pause (see flow-main-world.js) rather than inserting
+    // the whole prompt instantly, so long prompts legitimately take a few
+    // seconds.
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("Timed out waiting for the prompt composer to update."));
+    }, 30000);
+
+    function onMessage(event) {
+      if (event.source !== window) return;
+      const message = event.data;
+      if (!message || message.source !== "overflow-main-world" || message.requestId !== requestId) return;
+      clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+      if (message.ok) resolve();
+      else reject(new Error(message.error || "Failed to set the prompt text."));
+    }
+    window.addEventListener("message", onMessage);
+
+    window.postMessage({ source: "overflow-isolated", type: "SET_PROMPT_TEXT", requestId, text }, "*");
+  });
 }
 
 function isButtonDisabled(btn) {
@@ -109,28 +142,32 @@ function tileHasFinished(tileEl) {
   return !!tileEl.querySelector('a[href*="/edit/"]');
 }
 
-function getFinishedTileIds(container) {
+function getFinishedTileIds(root) {
   return new Set(
-    Array.from(container.querySelectorAll("[data-tile-id]"))
+    Array.from(root.querySelectorAll("[data-tile-id]"))
       .filter(tileHasFinished)
       .map((el) => el.getAttribute("data-tile-id"))
   );
 }
 
 /**
- * Watch the results gallery for a tile transitioning into the finished
- * state described above, ignoring any tile that was already finished
- * before this generation started.
+ * Watch for a tile transitioning into the finished state described above,
+ * ignoring any tile that was already finished before this generation started.
+ *
+ * This used to require `[data-testid="virtuoso-item-list"]` (the results
+ * gallery container seen while inspecting the "All Media" grid view) to
+ * exist before watching at all. In practice Flow renders results differently
+ * depending on which project view is active — e.g. a chat/agent-style
+ * composer, as opposed to that grid — and that container isn't always
+ * present, which surfaced as "Could not find the results gallery on the
+ * page" even though generation was working fine. The per-tile completion
+ * signal (a `data-tile-id` element gaining a finished edit link) is
+ * unambiguous by itself, so watch the whole document instead of gating on
+ * one specific container.
  */
 function waitForResult(timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
-    const container = document.querySelector('[data-testid="virtuoso-item-list"]');
-    if (!container) {
-      reject(new Error("Could not find the results gallery on the page."));
-      return;
-    }
-
-    const alreadyFinished = getFinishedTileIds(container);
+    const alreadyFinished = getFinishedTileIds(document);
 
     const timeout = setTimeout(() => {
       observer.disconnect();
@@ -138,7 +175,7 @@ function waitForResult(timeoutMs = 90000) {
     }, timeoutMs);
 
     const observer = new MutationObserver(() => {
-      const newlyFinished = Array.from(container.querySelectorAll("[data-tile-id]")).find(
+      const newlyFinished = Array.from(document.querySelectorAll("[data-tile-id]")).find(
         (el) => !alreadyFinished.has(el.getAttribute("data-tile-id")) && tileHasFinished(el)
       );
       if (newlyFinished) {
@@ -148,7 +185,7 @@ function waitForResult(timeoutMs = 90000) {
       }
     });
 
-    observer.observe(container, { childList: true, subtree: true, attributes: true });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
   });
 }
 
@@ -174,18 +211,56 @@ function extractResult(tileEl) {
 }
 
 /**
+ * Click the Generate button via a genuinely trusted click, dispatched from
+ * background.js over the Chrome DevTools Protocol.
+ *
+ * Confirmed via live testing that this button ignores every synthetic
+ * trigger a content script can produce on its own: plain `.click()`, a full
+ * `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click` sequence, and even
+ * a synthetic Enter keydown on the composer — all silently did nothing. The
+ * most likely explanation is that Flow deliberately gates the actual
+ * generate action behind `isTrusted` input, since it's a real compute cost
+ * per click — a reasonable anti-automation measure. `chrome.debugger` is the
+ * only thing that reproduced a click Flow actually acted on, so it's used
+ * here for just this one step (attach, one click, detach immediately) rather
+ * than for the whole interaction.
+ */
+async function clickGenerateButton(btn) {
+  const rect = btn.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+  const response = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ target: "background", type: "DEBUGGER_CLICK", payload: { x, y } }, resolve);
+  });
+  if (!response || !response.ok) {
+    throw new Error((response && response.error) || "Failed to click the Generate button.");
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Run a single prompt end-to-end: fill it in, click generate, wait for result.
  */
 async function runPrompt(text) {
   const input = findPromptInput();
   if (!input) throw new Error("Could not find the prompt input on the page.");
-  setPromptText(input, text);
+  await setPromptText(text);
 
   const btn = findGenerateButton();
   if (!btn) throw new Error("Could not find the Generate button.");
   const enabled = await waitForButtonEnabled(btn);
   if (!enabled) throw new Error("Generate button stayed disabled after entering the prompt.");
-  btn.click();
+
+  // The text lands and the button enables in a single tick — instant,
+  // machine-speed, back-to-back with filling the composer. Add a short
+  // randomized pause here, as if someone typed the prompt and glanced over
+  // it before hitting generate, rather than clicking the literal instant
+  // the field allows it.
+  await sleep(600 + Math.random() * 1200);
+  await clickGenerateButton(btn);
 
   return waitForResult();
 }
