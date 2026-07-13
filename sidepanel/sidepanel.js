@@ -20,6 +20,12 @@ const queueListEl = document.getElementById("queue-list");
 const queueProgressEl = document.getElementById("queue-progress");
 const statusDot = document.getElementById("status-dot");
 const statusText = document.getElementById("status-text");
+const blockingOverlayEl = document.getElementById("blocking-overlay");
+const blockingTitleEl = document.getElementById("blocking-title");
+const blockingMessageEl = document.getElementById("blocking-message");
+const blockingActionEl = document.getElementById("blocking-action");
+
+const FLOW_TOOL_URL = "https://labs.google/fx/tools/flow";
 
 let queue = [];       // [{ text, status }]
 let currentIndex = -1;
@@ -37,6 +43,10 @@ const STATUS_LABELS = {
   done: "Done ✓",
   error: "Error",
 };
+
+function updateClearButton() {
+  clearBtn.disabled = running || queue.length === 0;
+}
 
 function renderQueue() {
   queueListEl.innerHTML = "";
@@ -58,27 +68,7 @@ function renderQueue() {
   });
   const done = queue.filter((q) => q.status === "done").length;
   queueProgressEl.textContent = `${done} / ${queue.length}`;
-}
-
-/**
- * Turn prompt text into a filename-safe slug: lowercase, non-alphanumeric
- * runs collapsed to single hyphens, truncated to ~40 chars at a word
- * boundary (extending slightly past 40 rather than cutting mid-word).
- */
-function slugify(text, maxLength = 40) {
-  let slug = text
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  if (slug.length > maxLength) {
-    let cut = slug.indexOf("-", maxLength);
-    if (cut === -1) cut = slug.length;
-    slug = slug.slice(0, cut);
-  }
-
-  return slug.replace(/-+$/, "");
+  updateClearButton();
 }
 
 /**
@@ -100,19 +90,20 @@ promptFileEl.addEventListener("change", () => {
 
   const reader = new FileReader();
   reader.onload = () => {
-    const lines = String(reader.result)
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    promptsEl.value = lines.join("\n");
+    // Just normalize line endings — don't drop blank lines. Actual
+    // queue-building (on Start) already ignores blank lines on its own, so
+    // stripping them here served no functional purpose, only destroyed
+    // whatever paragraph spacing the source file had between prompts.
+    promptsEl.value = String(reader.result).replace(/\r\n/g, "\n");
   };
   reader.readAsText(file);
   promptFileEl.value = ""; // allow re-selecting the same file later
 });
 
 /**
- * Download a completed result, named "{index}-{slug}.{ext}" inside the
- * optional user-supplied subfolder. No-ops if there's no result URL.
+ * Download a completed result, named "{index}.{ext}" (zero-padded, e.g.
+ * "001.png") inside the optional user-supplied subfolder. No-ops if there's
+ * no result URL.
  *
  * The URL from flow.js is a normal same-origin URL (not a page-scoped
  * blob: URL), so chrome.downloads.download() can fetch it directly using
@@ -135,8 +126,7 @@ function downloadResult(resultData, index) {
     }
 
     const ext = resultData.mediaType === "video" ? "mp4" : "png";
-    const slug = slugify(queue[index].text);
-    const baseName = `${index + 1}-${slug}.${ext}`;
+    const baseName = `${String(index + 1).padStart(3, "0")}.${ext}`;
     const folder = sanitizeFolderName(downloadFolderEl.value);
     const filename = folder ? `${folder}/${baseName}` : baseName;
 
@@ -164,6 +154,7 @@ function downloadResult(resultData, index) {
 
 autoDownloadEl.addEventListener("change", () => {
   downloadSettingsHintEl.hidden = !autoDownloadEl.checked;
+  downloadFolderEl.disabled = !autoDownloadEl.checked;
 });
 
 openDownloadSettingsBtn.addEventListener("click", () => {
@@ -182,19 +173,73 @@ function sendToContent(type, payload) {
   });
 }
 
+function refreshFlowTab() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ target: "background", type: "REFRESH_FLOW_TAB" }, (response) => {
+      resolve(response || { ok: false, error: "No response from background script." });
+    });
+  });
+}
+
 /**
- * Poll for a live Flow tab so the status bar reflects reality instead of
- * showing its static "Idle" placeholder forever. Skipped while a queue is
- * running so it doesn't clobber the in-progress status text.
+ * Full-panel modal that blocks every control underneath it — not just a
+ * status message — for states where automation genuinely cannot proceed:
+ * not on a Flow project, or Flow's "Agent" composer mode is on (a different
+ * interaction model this automation was never built against). Forcing the
+ * user to actually resolve the problem, rather than letting them fumble
+ * with Start while the panel silently can't do anything, doubles as the
+ * anti-throttling measure requested alongside this — it keeps the Flow tab
+ * as the one thing on screen worth looking at.
+ */
+function showBlockingOverlay(reason, message) {
+  if (reason === "not-on-flow") {
+    blockingTitleEl.textContent = "Not on a Flow Project Page";
+    blockingMessageEl.textContent = message || "The Flow Automation tool only works when you're on a Flow project page.";
+    blockingActionEl.textContent = "Navigate to Flow";
+    blockingActionEl.hidden = false;
+    blockingActionEl.onclick = () => chrome.tabs.create({ url: FLOW_TOOL_URL });
+  } else if (reason === "agent-mode") {
+    blockingTitleEl.textContent = "Agent Mode Is On";
+    blockingMessageEl.textContent = "Turn off Flow's Agent mode to use Overflow — this automation isn't built for that interaction model.";
+    blockingActionEl.hidden = true;
+  }
+  blockingOverlayEl.hidden = false;
+}
+
+function hideBlockingOverlay() {
+  blockingOverlayEl.hidden = true;
+}
+
+/**
+ * Poll for a live, ready Flow tab so the status bar (and the blocking
+ * overlay) reflect reality instead of a static placeholder. Skipped while a
+ * queue is running so it doesn't clobber the in-progress status text — the
+ * overlay would otherwise physically prevent the running queue's own
+ * Pause/Stop controls from being clicked.
  */
 async function checkFlowTab() {
   if (running) return;
   const ping = await sendToContent("PING");
-  setStatus(
-    ping.ok ? "Flow tab detected — ready to start." : ping.error || "No Flow tab found — open a Flow project tab.",
-    ping.ok ? "idle" : "error"
-  );
+  if (!ping.ok) {
+    setStatus(ping.error || "No Flow tab found — open a Flow project tab.", "error");
+    showBlockingOverlay("not-on-flow", ping.error);
+    return;
+  }
+  if (ping.agentModeOn) {
+    setStatus("Agent mode is on — turn it off in Flow to continue.", "error");
+    showBlockingOverlay("agent-mode");
+    return;
+  }
+  setStatus("Flow tab detected — ready to start.", "idle");
+  hideBlockingOverlay();
 }
+
+// Best-effort refresh once when the panel first opens, so automation always
+// starts from a clean page load rather than a Flow tab that's been sitting
+// open accumulating state. Silent on failure — the paired tab may
+// legitimately not be on Flow yet at this point, and checkFlowTab()'s own
+// polling (below) already surfaces that clearly via the blocking overlay.
+refreshFlowTab();
 
 checkFlowTab();
 setInterval(checkFlowTab, 3000);
@@ -229,11 +274,24 @@ async function runQueue() {
   startBtn.disabled = true;
   pauseBtn.disabled = false;
   stopBtn.disabled = false;
-  clearBtn.disabled = true;
+  updateClearButton();
+
+  setStatus("Refreshing Flow tab...", "running");
+  const refresh = await refreshFlowTab();
+  if (!refresh.ok) {
+    setStatus(refresh.error || "No Flow tab found — open a Flow project first.", "error");
+    resetControls();
+    return;
+  }
 
   const ping = await sendToContent("PING");
   if (!ping.ok) {
     setStatus(ping.error || "No Flow tab found — open a Flow project first.", "error");
+    resetControls();
+    return;
+  }
+  if (ping.agentModeOn) {
+    setStatus("Agent mode is on — turn it off in Flow to continue.", "error");
     resetControls();
     return;
   }
@@ -289,7 +347,7 @@ function resetControls() {
   startBtn.disabled = false;
   pauseBtn.disabled = true;
   stopBtn.disabled = true;
-  clearBtn.disabled = false;
+  updateClearButton();
   pauseBtn.textContent = "Pause";
 }
 

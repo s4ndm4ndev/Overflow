@@ -65,8 +65,8 @@ label {
 
 textarea {
   width: 100%;
-  min-height: 120px;
-  resize: vertical;
+  height: 260px;
+  resize: none;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -202,6 +202,11 @@ textarea:focus, input:focus {
   padding: 8px 10px;
   font-family: inherit;
   font-size: 12.5px;
+}
+
+.folder-field input[type="text"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .controls {
@@ -369,3 +374,57 @@ button.primary:hover:not(:disabled) {
 .dot.idle { background: var(--text-dim); }
 .dot.running { background: var(--accent); }
 .dot.error { background: var(--error); }
+
+.blocking-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 13, 17, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+
+/*
+ * Author CSS always overrides the browser's built-in `[hidden] { display:
+ * none }` rule at equal specificity, so the `display: flex` above was
+ * permanently winning — hiding the overlay via the `hidden` attribute
+ * (hideBlockingOverlay()) never actually worked once it had been shown once.
+ * This rule's higher specificity (class + attribute) restores it.
+ */
+.blocking-overlay[hidden] {
+  display: none;
+}
+
+.blocking-card {
+  max-width: 260px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+  padding: 22px 18px;
+}
+
+.blocking-icon {
+  font-size: 26px;
+  color: var(--error);
+  margin-bottom: 10px;
+}
+
+.blocking-card h2 {
+  margin: 0 0 8px;
+  font-size: 14.5px;
+  color: var(--text);
+}
+
+.blocking-card p {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.blocking-card button {
+  width: 100%;
+}

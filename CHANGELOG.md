@@ -7,6 +7,50 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-13 — Auto-refresh, blocking overlays, and queue UI polish
+
+- **Auto-refresh the Flow tab**: `background.js` gained a `REFRESH_FLOW_TAB`
+  message that reloads the active Flow project tab and waits for it to
+  actually be usable before responding — fires once (silently) when the
+  side panel opens, and again (surfacing failures) right before every Start
+  queue click, so automation always begins from a clean page load.
+  - First version waited for the tab's "complete" load event plus a flat
+    800ms buffer, which wasn't consistently enough for Flow's React app to
+    finish mounting — the very first queued prompt after Start would run
+    against a composer that didn't exist yet (visible as a brief "error"
+    before the next prompt succeeded). Fixed by having `flow.js`'s PING
+    response report `composerReady: !!findPromptInput()`, and having
+    `background.js` poll that after "complete" fires instead of guessing
+    with a fixed delay.
+- **Blocking overlay for "not on Flow"**: a full-panel modal (confirmed
+  `position: fixed`, `z-index: 100` — physically blocks every control
+  underneath it) now shows whenever the tab-detection poll fails, with a
+  button that opens `labs.google/fx/tools/flow` in a new tab. Found and
+  fixed a real CSS bug during testing: `.blocking-overlay` set
+  `display: flex` directly, which — being author CSS — always overrode the
+  browser's built-in `[hidden] { display: none }` rule at equal specificity.
+  The overlay's `hidden` attribute was being toggled correctly in JS the
+  whole time; it just never had any visual effect once shown once. Fixed
+  with a higher-specificity `.blocking-overlay[hidden] { display: none; }`.
+- **Agent-mode detection**: found the DOM signal via live (read-only)
+  inspection — Flow's "Agent" composer toggle is a real
+  `<button aria-pressed="true|false">`, a stable accessibility attribute,
+  not a generated class. `flow.js`'s PING response now reports
+  `agentModeOn`, and the panel refuses to run (same blocking-overlay
+  treatment, no action button since the fix has to happen on Flow's own
+  page) while it's on — this automation was never built against Agent
+  mode's different, chat-style interaction.
+- **Queue/download UI polish**: Clear queue button now disables itself
+  correctly when the queue is empty (previously stayed clickable always);
+  download folder field has a real default value (not just a placeholder)
+  and stays disabled until auto-download is checked; downloaded filenames
+  are now just zero-padded numbers ("001.png") instead of embedding the
+  prompt text; uploading a .txt file of prompts no longer strips blank
+  lines between them (was purely cosmetic breakage — the blank lines were
+  already ignored during actual queue-building — but destroyed the
+  readability of paragraph-separated prompts); prompts textarea is now a
+  fixed 260px instead of a small resizable box.
+
 ## 2026-07-13 — Fixed the debugger click landing on nothing
 
 - Root cause of "text types fine, but nothing ever submits or generates,"
