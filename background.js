@@ -25,6 +25,86 @@ const FLOW_ORIGIN_PATTERN = /^https:\/\/labs\.google\/fx\//;
 const FLOW_PROJECT_PATTERN = /^https:\/\/labs\.google\/fx\/tools\/flow\/project\/[^/?#]+/;
 
 /**
+ * Resolve the active tab of the focused window to a usable Flow project tab,
+ * or a specific reason it isn't one. Shared by the "content" relay below and
+ * the tab-refresh handler, so both apply the exact same "is this actually
+ * usable" rule.
+ */
+function findActiveFlowProjectTab() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      const url = (tab && tab.url) || "";
+      if (!FLOW_ORIGIN_PATTERN.test(url)) {
+        resolve({ tab: null, error: "Flow tab is not active. Switch to the Flow project tab to continue." });
+        return;
+      }
+      if (!FLOW_PROJECT_PATTERN.test(url)) {
+        resolve({ tab: null, error: "Open a Flow project to continue — you're on Flow, but not inside a project." });
+        return;
+      }
+      resolve({ tab, error: null });
+    });
+  });
+}
+
+/**
+ * Reload a tab and wait for it to actually be usable, rather than just
+ * firing chrome.tabs.reload() and guessing. "complete" (the tab's load
+ * event) only means the network/resources finished — Flow's React app can
+ * take noticeably longer than that to actually mount the composer.
+ * Confirmed live: a fixed ~800ms buffer after "complete" wasn't consistently
+ * enough, so the first queued prompt after Start would run against a
+ * composer that didn't exist yet (error), only for the next one to succeed
+ * once the app had caught up. Fixed by polling the (freshly re-injected)
+ * content script's own composerReady signal after "complete" fires, instead
+ * of trusting a fixed delay.
+ */
+function reloadTabAndWait(tabId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const start = Date.now();
+
+    const timeout = setTimeout(() => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Timed out waiting for the Flow tab to finish reloading."));
+    }, timeoutMs);
+
+    function pollComposerReady() {
+      if (done) return;
+      chrome.tabs.sendMessage(tabId, { target: "content", type: "PING" }, (response) => {
+        void chrome.runtime.lastError; // content script not injected yet right after reload — expected, ignore
+        if (done) return;
+        if (response && response.ok && response.composerReady) {
+          done = true;
+          clearTimeout(timeout);
+          resolve();
+          return;
+        }
+        if (Date.now() - start > timeoutMs) {
+          done = true;
+          clearTimeout(timeout);
+          reject(new Error("Flow's page took too long to become ready after reloading."));
+          return;
+        }
+        setTimeout(pollComposerReady, 300);
+      });
+    }
+
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete" || done) return;
+      chrome.tabs.onUpdated.removeListener(listener);
+      pollComposerReady();
+    }
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId);
+  });
+}
+
+/**
  * Dispatch one genuinely trusted mouse click at (x, y) in tab coordinates,
  * via the Chrome DevTools Protocol — split into separate attach / click /
  * detach steps (see the message handlers below for why).
@@ -112,6 +192,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async response
   }
 
+  if (message.target === "background" && message.type === "REFRESH_FLOW_TAB") {
+    findActiveFlowProjectTab().then(({ tab, error }) => {
+      if (!tab) {
+        sendResponse({ ok: false, error });
+        return;
+      }
+      reloadTabAndWait(tab.id)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+    });
+    return true; // async response
+  }
+
   if (message.target === "content") {
     // Forward the command only to the currently active tab in the focused
     // window, and only if that tab is actually an open Flow project. A Flow
@@ -119,15 +212,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // tab, or on Flow but without a project open) should NOT count as
     // "detected" — otherwise the panel reports readiness when there's
     // nowhere for the content script to actually run.
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      const tab = tabs[0];
-      const url = (tab && tab.url) || "";
-      if (!FLOW_ORIGIN_PATTERN.test(url)) {
-        sendResponse({ ok: false, error: "Flow tab is not active. Switch to the Flow project tab to continue." });
-        return;
-      }
-      if (!FLOW_PROJECT_PATTERN.test(url)) {
-        sendResponse({ ok: false, error: "Open a Flow project to continue — you're on Flow, but not inside a project." });
+    findActiveFlowProjectTab().then(({ tab, error }) => {
+      if (!tab) {
+        sendResponse({ ok: false, error });
         return;
       }
       chrome.tabs.sendMessage(tab.id, message, (response) => {

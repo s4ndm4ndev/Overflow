@@ -309,12 +309,30 @@ async function runPrompt(text) {
   return waitForResult();
 }
 
+/**
+ * Whether Flow's "Agent" composer mode is toggled on. Confirmed via live
+ * inspection: the toggle is a real <button aria-pressed="true|false"> with
+ * visible text "Agent" — an accessibility attribute, not a generated class,
+ * so it's stable across builds. Agent mode changes how the composer behaves
+ * (it's a different, chat-style interaction), which the rest of this file's
+ * automation was never built against — the panel should refuse to run while
+ * it's on rather than silently misbehaving against it.
+ */
+function isAgentModeOn() {
+  const btn = Array.from(document.querySelectorAll("button")).find((b) => (b.textContent || "").trim() === "Agent");
+  return !!btn && btn.getAttribute("aria-pressed") === "true";
+}
+
 // Listen for commands from the side panel (relayed via background.js).
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "content") return;
 
   if (message.type === "PING") {
-    sendResponse({ ok: true });
+    // composerReady lets background.js's post-reload wait confirm Flow's
+    // React app has actually mounted the prompt input, rather than guessing
+    // with a fixed delay after the page's load event (which fires well
+    // before a heavy SPA finishes rendering).
+    sendResponse({ ok: true, agentModeOn: isAgentModeOn(), composerReady: !!findPromptInput() });
     return;
   }
 
