@@ -55,7 +55,7 @@ extension:
 permitted, even for unpacked/dev use. This repo uses the 4th segment as a
 pre-release build counter instead of a text suffix, e.g. `1.0.0.0` is the
 first alpha build of the `1.0.0` line. The alpha/beta/stable status itself is
-tracked in this README and [Changelog.md](Changelog.md), not in the manifest.
+tracked in this README and [Changelog.md](https://github.com/s4ndm4ndev/Overflow/blob/master/CHANGELOG.md), not in the manifest.
 
 To bump the version:
 
