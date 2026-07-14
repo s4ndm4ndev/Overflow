@@ -12,6 +12,12 @@
       <h1>Overflow</h1>
     </header>
 
+    <nav class="tab-bar">
+      <button type="button" class="tab-button active" data-tab="controls">Controls</button>
+      <button type="button" class="tab-button" data-tab="about">About</button>
+    </nav>
+
+    <div id="controls-view">
     <section class="panel">
       <label for="prompts">Prompts <span class="hint">one per line</span></label>
       <textarea id="prompts" placeholder="a red bicycle leaning against a brick wall&#10;a cup of coffee on a wooden desk&#10;..."></textarea>
@@ -82,6 +88,21 @@
       </div>
       <ul id="queue-list"></ul>
     </section>
+    </div>
+
+    <div id="about-view" hidden>
+      <section class="panel about-panel">
+        <div class="about-brand">
+          <span class="logo-mark">≈</span>
+          <h2>Overflow</h2>
+        </div>
+        <dl class="about-meta">
+          <div><dt>Version</dt><dd id="about-version">—</dd></div>
+          <div><dt>Author</dt><dd>S4NDM4N</dd></div>
+          <div><dt>Web Site</dt><dd><button type="button" id="about-website-link" class="link-button">s4ndm4n.dev</button></dd></div>
+        </dl>
+      </section>
+    </div>
   </div>
 
   <footer class="status-bar">

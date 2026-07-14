@@ -7,6 +7,36 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Bump version to 1.0.0
+
+- Manifest was still at `0.1.0` despite the extension having a full feature
+  set (queue automation, consistent character, auto-download, focus
+  auto-pause, etc.). Bumped [manifest.json](manifest.json) to `1.0.0` at the
+  user's request, now that the new About tab surfaces the version number
+  directly in the UI. The About tab needed no code change — it reads the
+  version from `chrome.runtime.getManifest()` rather than a hardcoded value.
+
+## 2026-07-14 — Add About tab (version, author, website link)
+
+- **Request**: surface the extension version, author name ("S4NDM4N"), and a
+  link to https://s4ndm4n.dev/ somewhere in the side panel.
+- **Fix**: split the side panel into two tabs — "Controls" (existing
+  prompts/queue UI, unchanged, now wrapped in `#controls-view`) and "About"
+  (new `#about-view`) — via a `.tab-bar` under the header in
+  [sidepanel.html](sidepanel/sidepanel.html). No tab system existed before
+  this; it's a new pattern built from the existing design tokens
+  (`sidepanel.css`'s `:root` vars), not an extension of anything prior.
+- Version is read dynamically via `chrome.runtime.getManifest().version` in
+  `sidepanel.js` rather than hardcoded, so it can never drift from
+  [manifest.json](manifest.json)'s own `"version"` field.
+- The website link reuses the existing `.link-button` + `chrome.tabs.create()`
+  convention already used for the download-settings link
+  (`sidepanel.js`'s `openDownloadSettingsBtn` handler), instead of a plain
+  `<a target="_blank">`, to stay consistent with how every other external
+  link in this codebase works. Listed as a third "Web Site" row in the
+  `.about-meta` list alongside Version/Author (rather than a standalone
+  button below it), per follow-up request.
+
 ## 2026-07-14 — Reset panel to starting state after a clean batch
 
 - **Request**: after a batch finished, the panel only ever cleared the

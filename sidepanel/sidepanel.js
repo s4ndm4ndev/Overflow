@@ -29,8 +29,14 @@ const blockingOverlayEl = document.getElementById("blocking-overlay");
 const blockingTitleEl = document.getElementById("blocking-title");
 const blockingMessageEl = document.getElementById("blocking-message");
 const blockingActionEl = document.getElementById("blocking-action");
+const tabButtons = document.querySelectorAll(".tab-button");
+const controlsViewEl = document.getElementById("controls-view");
+const aboutViewEl = document.getElementById("about-view");
+const aboutVersionEl = document.getElementById("about-version");
+const aboutWebsiteLinkEl = document.getElementById("about-website-link");
 
 const FLOW_TOOL_URL = "https://labs.google/fx/tools/flow";
+const AUTHOR_WEBSITE_URL = "https://s4ndm4n.dev/";
 
 let queue = [];       // [{ text, status, matchedImages: [{id, characterName}] }]
 let currentIndex = -1;
@@ -354,6 +360,21 @@ autoDownloadEl.addEventListener("change", () => {
 
 openDownloadSettingsBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: "chrome://settings/downloads" });
+});
+
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    tabButtons.forEach((b) => b.classList.toggle("active", b === button));
+    const showAbout = button.dataset.tab === "about";
+    controlsViewEl.hidden = showAbout;
+    aboutViewEl.hidden = !showAbout;
+  });
+});
+
+aboutVersionEl.textContent = chrome.runtime.getManifest().version;
+
+aboutWebsiteLinkEl.addEventListener("click", () => {
+  chrome.tabs.create({ url: AUTHOR_WEBSITE_URL });
 });
 
 function sleep(ms) {

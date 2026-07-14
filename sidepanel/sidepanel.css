@@ -62,6 +62,65 @@ body {
   letter-spacing: 0.2px;
 }
 
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-button {
+  flex: 1;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.about-brand h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.2px;
+}
+
+.about-meta {
+  margin: 16px 0 0;
+}
+
+.about-meta div {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-meta dt {
+  color: var(--text-dim);
+}
+
+.about-meta dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.about-meta .link-button {
+  margin-top: 0;
+}
+
 .panel {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
