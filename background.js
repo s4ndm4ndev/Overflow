@@ -317,7 +317,12 @@ function checkAndBroadcastFocusState() {
     const focused = !!tab;
     if (focused === lastReportedFlowFocused) return;
     lastReportedFlowFocused = focused;
-    chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused } });
+    // No callback here means this returns a Promise in MV3, which rejects
+    // with "Could not establish connection. Receiving end does not exist."
+    // whenever the side panel isn't open to receive it — an expected case
+    // (panel closed), not a real failure, so the rejection is swallowed
+    // rather than surfacing as an uncaught error.
+    chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused } }).catch(() => {});
   });
 }
 
@@ -334,7 +339,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
     if (lastReportedFlowFocused !== false) {
       lastReportedFlowFocused = false;
-      chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused: false } });
+      chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused: false } }).catch(() => {});
     }
     return;
   }
