@@ -174,11 +174,59 @@ textarea:focus, input:focus {
   color: #0b1420;
 }
 
-.toggle-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
+.switch {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
   cursor: pointer;
+}
+
+.switch .toggle-checkbox {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.toggle-checkbox:checked + .switch-track {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.toggle-checkbox:checked + .switch-track::after {
+  transform: translateX(14px);
+  background: #eaf6ff;
+}
+
+.toggle-checkbox:focus-visible + .switch-track {
+  outline: 2px solid var(--accent-dim);
+  outline-offset: 1px;
 }
 
 .hint-banner {
