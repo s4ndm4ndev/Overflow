@@ -1,70 +1,76 @@
 # Overflow
 
-Free, bulk prompt automation for Google Flow. Paste a list of prompts, walk away, come back to generated results — no paid tier gatekeeping basic queueing.
+Free, bulk prompt automation for Google Flow. Paste a list of prompts, walk
+away, come back to generated (and optionally downloaded) results — no paid
+tier gatekeeping basic queueing.
 
-## Status: scaffold only
+## Status: alpha (`1.0.0.0`)
 
-This is a working extension *shell*, not a finished tool. It installs, opens
-a side panel, and has a full queue UI — but it can't actually talk to the
-Flow page yet, because the DOM selectors in `content-scripts/flow.js` are
-placeholders. Everything marked `TODO` in that file needs a real selector
-pulled from Flow's live page.
+This is the first public alpha. The core flow — queue prompts, generate in
+bulk, auto-download results — works end to end and has been used for real
+batches, but it hasn't been through wide testing yet. Expect rough edges.
 
-## What's built
+## Features
 
-- `manifest.json` — Manifest V3, side panel + content script wired up
-- `background.js` — opens the side panel on icon click, relays messages
-  between the panel and the content script (they can't talk directly)
-- `sidepanel/` — the actual UI: paste prompts, set delay, start/pause/stop,
-  see per-prompt status live
-- `content-scripts/flow.js` — the automation logic *shape* (find input, set
-  text, click generate, wait for result) with working React-input-setting
-  logic, but placeholder selectors
-- `icons/` — placeholder toolbar icons (swap for real branding later)
+- **Bulk prompt queue** — paste or upload a list of prompts (blank lines
+  between paragraphs are preserved), set a min/max delay, then Start. The
+  queue runs unattended: types each prompt with human-like pacing, submits
+  via a genuinely trusted click (Flow ignores synthetic clicks on its
+  Generate button), and waits for the result before moving on.
+- **Pause / Resume / Clear queue** — pause and resume manually at any point;
+  a queue that finishes cleanly resets the panel for the next batch, while a
+  batch with errors leaves the prompts in place so you can review and retry.
+- **Auto-pause on focus loss** — automatically pauses if the Flow tab isn't
+  the active tab (Chrome throttles background-tab timers, which can silently
+  stall a long run), and resumes the moment it's focused again.
+- **Consistent Character** — upload reference images named after your
+  characters (e.g. `narrator.png`); each queued prompt is scanned for name
+  matches (negation-aware — "no NARRATOR in frame" won't attach it) and the
+  matching images are attached to the composer before the prompt runs, so
+  the same character stays visually consistent across a batch.
+- **Auto Download** — automatically saves each finished result into a chosen
+  subfolder with zero-padded filenames (`001.jpg`, `002.jpg`, ...) instead of
+  Flow's own asset UUIDs.
+- **Guardrails** — a blocking overlay when you're not on a Flow project tab
+  (with a one-click link to open one), and another if Flow's Agent/chat mode
+  is on, since this automation targets the standard prompt composer.
+- **About tab** — version, author, and website, read live from
+  `manifest.json` so it can't drift out of sync.
 
-## Before Claude Code can finish this
+## Installing (unpacked)
 
-The one real blocker: **we haven't inspected Flow's actual page yet.** Do
-this first, in Chrome DevTools, on a live `labs.google/fx/...` project page:
+Overflow isn't on the Chrome Web Store yet — load it as an unpacked
+extension:
 
-1. **Prompt input** — right-click the prompt text field → Inspect. Note the
-   tag (`textarea` vs `contenteditable div`), and any `aria-label`,
-   `data-testid`, or `placeholder` attribute. Avoid relying on the class
-   name — Flow is React and classes are likely generated/unstable.
-2. **Generate button** — same treatment. Look for `aria-label` or visible
-   text you can match on.
-3. **Results container** — trigger one generation manually and watch the
-   Elements panel for what changes when a result finishes. You want the
-   parent element that gets a new child (image/video) appended, and what
-   distinguishes a "finished" thumbnail from a "still loading" one (e.g. a
-   loading spinner class that disappears, or an `<img>`'s `src` finally
-   being non-empty).
-4. **Copy 2–3 real example prompt submissions** and note the network
-   requests in the Network tab (filter by Fetch/XHR) — even without a
-   public API, seeing the request/response shape sometimes reveals a more
-   reliable way to detect "done" than DOM-watching alone.
-
-Bring those selectors (or just paste raw HTML snippets) into your Claude
-Code session along with this repo, and the three `TODO`-marked functions in
-`content-scripts/flow.js` — `findPromptInput`, `findGenerateButton`,
-`waitForResult` — are what need to get filled in.
-
-## Loading it locally (to test the shell now)
-
-1. `chrome://extensions`
+1. Go to `chrome://extensions`
 2. Enable "Developer mode" (top right)
 3. "Load unpacked" → select this folder
-4. Click the Overflow icon → side panel opens
-5. It'll correctly report "No Flow tab found" until the content script
-   selectors are real — that error path already works.
+4. Click the Overflow icon in the toolbar → the side panel opens on a Flow
+   project tab (`labs.google/fx/...`)
 
-## Known open questions (not yet decided)
+## Versioning
 
-- **Download step**: once `waitForResult` returns a real asset URL, we still
-  need to wire up `chrome.downloads.download()` — not built yet.
-- **Rate limiting / detection risk**: no artificial delay randomization yet
-  beyond the fixed per-prompt delay in the UI. Worth revisiting once the
-  automation actually works, to avoid anything that looks bot-like.
-- **Persistence**: prompt queue currently lives only in the side panel's
-  JS memory — closing the panel loses progress. `chrome.storage.local` isn't
-  wired in yet.
+`manifest.json`'s `version` field is constrained by Chrome to plain
+`major.minor.patch.build` integers — no `-alpha`/`-beta` suffixes are
+permitted, even for unpacked/dev use. This repo uses the 4th segment as a
+pre-release build counter instead of a text suffix, e.g. `1.0.0.0` is the
+first alpha build of the `1.0.0` line. The alpha/beta/stable status itself is
+tracked in this README and [Changelog.md](https://github.com/s4ndm4ndev/Overflow/blob/master/CHANGELOG.md), not in the manifest.
+
+To bump the version:
+
+```
+node scripts/bump-version.js <major|minor|patch|build>
+```
+
+Bumping a segment resets everything to its right to `0` (standard semver
+behavior) — e.g. `patch` on `1.2.3.4` gives `1.2.4.0`.
+
+## Known limitations
+
+- Not published to the Chrome Web Store — install as unpacked for now.
+- Only supports Flow's standard prompt composer, not Agent/chat mode.
+- Prompt queue lives in the side panel's memory only — closing the panel
+  loses progress on the current batch.
+- No rate-limit/detection-risk tuning beyond the configurable delay and
+  human-like typing pace.
