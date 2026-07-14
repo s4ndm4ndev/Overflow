@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Overflow",
   "short_name": "Overflow",
-  "version": "1.0.0",
+  "version": "1.0.0.0",
   "description": "Free bulk prompt automation for Google Flow. Queue prompts, generate in bulk, download the results.",
   "permissions": ["storage", "downloads", "sidePanel", "scripting", "activeTab", "debugger"],
   "host_permissions": ["https://labs.google/*"],

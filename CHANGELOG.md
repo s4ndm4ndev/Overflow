@@ -11,6 +11,38 @@ rewritten out of history to remove it — don't reintroduce it.
 
 Newest first.
 
+## 2026-07-14 — First alpha release: version scheme, `bump-version.js`, README rewrite
+
+- **Request**: mark this the first public alpha, with a version that "looks
+  like `1.0.0-alpha`," rewrite the stale README, and automate version bumps.
+- **Chrome constraint discovered**: MV3's `manifest.json` `version` field
+  must be 1-4 dot-separated integers — Chrome rejects `-alpha`/`-beta`
+  suffixes outright, even for unpacked/dev loads, so a literal
+  `"1.0.0-alpha"` isn't loadable. Presented the standard workaround
+  (`version_name` for a free-text display label) vs. using the version
+  field's 4th segment as a numeric build/pre-release counter with no text
+  suffix at all. User chose the latter — bumped [manifest.json](manifest.json)
+  to `1.0.0.0`; alpha/beta/stable status lives only in README/Changelog now,
+  not the manifest.
+- **Added [scripts/bump-version.js](scripts/bump-version.js)**: `node
+  scripts/bump-version.js <major|minor|patch|build>` bumps one segment and
+  zeroes everything to its right (standard semver-style behavior). First
+  version used `JSON.parse`/`JSON.stringify` to rewrite the whole file, which
+  silently reformatted every array in `manifest.json` onto multiple lines
+  (Node's stringify doesn't preserve the original inline-array style) —
+  caught by diffing after a test run, before it was ever committed. Rewrote
+  to do a targeted regex replace of just the `"version": "..."` line instead,
+  leaving the rest of the file's formatting untouched.
+- **Rewrote [README.md](README.md)**: the old one described Overflow as a
+  "scaffold only" with placeholder DOM selectors and TODO functions — that
+  was true at the initial-scaffold commit but every feature built since
+  (queue automation, Consistent Character, Auto Download, focus auto-pause,
+  About tab, blocking overlays) had left it undocumented and actively
+  misleading. Replaced with the real feature list, unpacked-install steps,
+  the versioning scheme note above, and an updated known-limitations list
+  (dropped the resolved items like download naming/subfolders; kept the
+  ones still true, e.g. queue is memory-only, no Web Store listing yet).
+
 ## 2026-07-14 — Fix uncaught "Could not establish connection" errors in background.js
 
 - **Report**: `chrome://extensions` error log showed repeated `Uncaught (in
