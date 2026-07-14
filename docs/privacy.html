@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overflow — Privacy Policy</title>
+<style>
+  :root {
+    --ink: #101828;
+    --muted: #4b5568;
+    --line: #e4e7ec;
+    --accent: #1fc0aa;
+    --bg: #ffffff;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 64px 24px 96px;
+  }
+  h1 {
+    font-size: 32px;
+    margin-bottom: 4px;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 40px;
+  }
+  h2 {
+    font-size: 20px;
+    margin-top: 40px;
+    margin-bottom: 12px;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
+    padding-bottom: 4px;
+  }
+  p, li {
+    color: var(--ink);
+    font-size: 16px;
+  }
+  ul {
+    padding-left: 20px;
+  }
+  li {
+    margin-bottom: 8px;
+  }
+  .callout {
+    background: #f2fdfb;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 24px 0;
+    font-size: 15px;
+  }
+  code {
+    background: #f2f4f7;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  a {
+    color: var(--accent);
+  }
+  footer {
+    margin-top: 56px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Privacy Policy for Overflow</h1>
+  <div class="meta">Effective date: July 14, 2026</div>
+
+  <p>Overflow is a free Chrome extension that automates bulk prompt submission on Google Flow&trade;. This policy explains what data Overflow accesses, how it's used, and what is (and isn't) collected.</p>
+
+  <div class="callout">
+    <strong>In short:</strong> Overflow runs entirely inside your own browser, on your own Google Flow account. It does not have a server, does not transmit your prompts, images, or activity anywhere, and does not sell or share data with anyone.
+  </div>
+
+  <h2>What Overflow accesses</h2>
+  <p>To do its job — queueing and submitting prompts on your behalf — Overflow reads and interacts with the content of the Google Flow page (<code>labs.google/fx</code>) that you have open. Specifically, it:</p>
+  <ul>
+    <li>Reads the state of Flow's prompt composer, so it knows when a prompt has finished generating and it's safe to submit the next one.</li>
+    <li>Types queued prompts into the composer and submits them on your behalf.</li>
+    <li>Reads generated results (images/video) so they can be downloaded, if you've enabled Auto Download.</li>
+    <li>Matches uploaded reference images to prompts by filename, for the Consistent Character feature.</li>
+  </ul>
+  <p>This is the only site Overflow interacts with. It does not read, monitor, or collect data from any other tab or website you visit.</p>
+
+  <h2>What Overflow does <em>not</em> collect</h2>
+  <p>Overflow does not collect, transmit, or have any means of accessing:</p>
+  <ul>
+    <li>Personally identifiable information (name, email, address, etc.)</li>
+    <li>Authentication credentials or passwords</li>
+    <li>Health, financial, or payment information</li>
+    <li>Your browsing history or activity outside of the Google Flow tab</li>
+    <li>Location data</li>
+  </ul>
+
+  <h2>Where your data lives</h2>
+  <p>Overflow stores the following locally in your browser only, using Chrome's built-in storage APIs. This data never leaves your device:</p>
+  <ul>
+    <li>Your prompt queue and queue settings (delay range, download folder name, auto-download toggle)</li>
+    <li>Uploaded character reference images, for matching against queued prompts</li>
+  </ul>
+  <p>Overflow has no backend server. There is nowhere for this data to be sent, because no such destination exists.</p>
+
+  <h2>Permissions Overflow uses, and why</h2>
+  <ul>
+    <li><strong>Host permission (labs.google/fx):</strong> required to read and interact with Flow's prompt composer — this is the extension's core function.</li>
+    <li><strong>debugger:</strong> used narrowly to send a single trusted click to Flow's Generate button when submitting a queued prompt, since Flow's composer does not respond to standard synthetic click events. It is only active on the current Flow tab, only while a queue is running, and is not used for anything else.</li>
+    <li><strong>downloads:</strong> used only when you enable Auto Download, to save your own generated results to a folder you choose.</li>
+    <li><strong>storage:</strong> used to save your queue settings and reference images locally, as described above.</li>
+    <li><strong>sidePanel:</strong> used to display the queue controls in Chrome's side panel, so you can monitor and control a running queue.</li>
+  </ul>
+
+  <h2>Sharing and selling of data</h2>
+  <p>Overflow does not sell, rent, or transfer any user data to third parties. It does not use data for advertising, profiling, or any purpose unrelated to running your own prompt queue on your own Google Flow account.</p>
+
+  <h2>Children's privacy</h2>
+  <p>Overflow is not directed at, or knowingly used by, children. It is a developer/creator productivity tool intended for adult use in connection with a Google Flow account.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, the updated version will be posted at this same URL with a revised effective date. Material changes affecting how your data is handled will also be reflected in Overflow's Chrome Web Store listing.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or how Overflow handles data can be sent to:<br>
+  <strong>[YOUR CONTACT EMAIL HERE]</strong></p>
+
+  <footer>
+    Overflow is an independent project and is not affiliated with, endorsed by, or produced by Google. Google Flow&trade; is a trademark of Google LLC.
+  </footer>
+
+</div>
+</body>
+</html>
