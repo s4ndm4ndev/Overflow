@@ -530,9 +530,15 @@ async function runQueue() {
     // Ran to natural completion (as opposed to being stopped partway) —
     // clear the queue so the next "Start queue" click loads a fresh batch
     // from the textarea instead of silently re-running the same one.
+    const hadErrors = queue.some((item) => item.status === "error");
     queue = [];
     renderQueue();
-    setStatus("Queue complete. Add new prompts to start again.", "idle");
+    if (hadErrors) {
+      setStatus("Queue complete — some prompts failed. Review and try again.", "error");
+    } else {
+      resetToStartingState();
+      setStatus("Batch complete. Ready for the next batch.", "idle");
+    }
   }
   resetControls();
 }
@@ -546,6 +552,18 @@ function resetControls() {
   stopBtn.disabled = true;
   updateClearButton();
   pauseBtn.textContent = "Pause";
+}
+
+// Clears the prompts textarea and queue/index back to a fresh-panel state
+// after a fully successful batch. Deliberately leaves Consistent Character
+// (toggle, uploaded images) and Auto Download (toggle, folder) alone, along
+// with the delay fields — those are per-user preferences that should carry
+// over batch to batch, not per-batch inputs.
+function resetToStartingState() {
+  promptsEl.value = "";
+  queue = [];
+  currentIndex = -1;
+  renderQueue();
 }
 
 /**

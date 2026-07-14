@@ -7,6 +7,36 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Reset panel to starting state after a clean batch
+
+- **Request**: after a batch finished, the panel only ever cleared the
+  in-memory `queue` array (`runQueue()`'s natural-completion branch) —
+  the prompts textarea was left populated. Since the Start button rebuilds
+  the queue from the textarea only when `queue` is empty, this meant
+  clicking Start again after a finished batch silently re-ran the exact
+  same prompts instead of prompting for a fresh batch.
+- **Fix**: added `resetToStartingState()` in `sidepanel/sidepanel.js`,
+  called from `runQueue()`'s natural-completion branch. Clears the prompts
+  textarea plus `queue`/`currentIndex`. Deliberately does **not** touch
+  Consistent Character (toggle, uploaded character images) or Auto Download
+  (toggle, download folder) — confirmed with the user these should persist
+  batch to batch, not reset. Delay min/max fields were also confirmed to be
+  a tuned preference rather than a per-batch input, so those are left alone
+  too. Isolation is by construction: the new function never references
+  `consistentCharacterToggleEl`, `characterRecords`, `autoDownloadEl`,
+  `downloadFolderEl`, or the delay fields at all, and Consistent
+  Character/Auto Download's actual persisted state lives in
+  `chrome.storage.local`/IndexedDB, entirely separate stores from the
+  in-memory queue/DOM fields being cleared here.
+- **Only resets on a fully clean run**: if any prompt in the batch errored
+  (`queue[i].status === "error"`), the reset is skipped and a distinct
+  status message shows instead ("some prompts failed. Review and try
+  again.") — confirmed with the user that an errored run should leave the
+  textarea in place for the user to see/retry, rather than silently wiping
+  it along with the evidence of what failed. The existing unconditional
+  `queue = []` on natural completion is unchanged either way — only the new
+  textarea/index reset is gated on the error check.
+
 ## 2026-07-14 — Auto-pause the queue when the Flow tab isn't focused
 
 - **Request**: the queue kept running even after switching away to another
