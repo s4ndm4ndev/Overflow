@@ -7,6 +7,40 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Download naming/subfolder fix (route through onDeterminingFilename)
+
+- **Bug reports**: auto-download was saving files straight into the default
+  Downloads folder (ignoring the subfolder textbox) and naming them after
+  Flow's own asset UUID (e.g. `7546f153-eb33-46a4-b611-d2dc6b606a73.jpg`)
+  instead of the intended zero-padded `001.jpg`, `002.jpg`, etc.
+- **Root cause**: `sidepanel.js`'s `downloadResult()` was passing the desired
+  `filename` (subfolder + zero-padded name) directly as an option to
+  `chrome.downloads.download()`. That option is not authoritative — Chrome
+  can silently fall back to a name derived from the download's own URL/
+  response instead of erroring, which is exactly what was happening here.
+  `chrome.downloads.onDeterminingFilename` is the API's actual override
+  point (it always wins), so filename decisions moved there.
+- **Fix**: `background.js` now owns the whole download call. It exposes a
+  new `DOWNLOAD_RESULT` message (`{url, folder, baseIndex}`); on receipt it
+  pushes `{folder, baseIndex}` onto a small FIFO queue and calls
+  `chrome.downloads.download({url, saveAs:false})`. A single
+  `chrome.downloads.onDeterminingFilename` listener shifts the next queued
+  entry and calls `suggest({filename, conflictAction:"uniquify"})`. The
+  queue (not a downloadId-keyed map) exists because nothing guarantees the
+  `.download()` callback fires before `onDeterminingFilename` does for the
+  same download — pushing synchronously right before calling `download()`
+  sidesteps that ordering question. Safe here since we only ever have one
+  of our own downloads in flight at a time.
+  - Bonus fix from the same change: extension is now derived from the real
+    `downloadItem.mime` Chrome reports (falling back to the existing
+    suggested filename's extension, then `.jpg`) instead of a hardcoded
+    `.png` for images — Flow actually serves images as `image/jpeg`.
+  - `sidepanel.js`'s `downloadResult()` is now just a thin message-sender:
+    builds `{folder, baseIndex}`, sends `DOWNLOAD_RESULT`, and keeps its
+    existing 8-second Save-As-dialog safety timeout around the response.
+- **Confirmed working** after reloading the unpacked extension — subfolder
+  and zero-padded filenames both land correctly now.
+
 ## 2026-07-13 — Auto-refresh, blocking overlays, and queue UI polish
 
 - **Auto-refresh the Flow tab**: `background.js` gained a `REFRESH_FLOW_TAB`

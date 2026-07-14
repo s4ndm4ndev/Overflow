@@ -101,14 +101,20 @@ promptFileEl.addEventListener("change", () => {
 });
 
 /**
- * Download a completed result, named "{index}.{ext}" (zero-padded, e.g.
- * "001.png") inside the optional user-supplied subfolder. No-ops if there's
- * no result URL.
+ * Ask the background service worker to download a completed result, named
+ * "{index}.{ext}" (zero-padded, e.g. "001.jpg") inside the optional
+ * user-supplied subfolder. No-ops if there's no result URL.
  *
- * The URL from flow.js is a normal same-origin URL (not a page-scoped
- * blob: URL), so chrome.downloads.download() can fetch it directly using
- * the browser's own cookies — no need to pass image bytes through
- * chrome.runtime messaging.
+ * The actual filename is applied in background.js via
+ * chrome.downloads.onDeterminingFilename rather than the `filename` option
+ * on chrome.downloads.download() itself — passing it directly there was
+ * confirmed live to silently lose both the subfolder and the zero-padded
+ * name (files landed straight in the default Downloads folder, named after
+ * Flow's own asset UUID instead). onDeterminingFilename is the API's actual
+ * authoritative override point, and it also hands us the real Content-Type,
+ * so background.js can pick the correct extension instead of guessing one
+ * ahead of time (Flow serves images as .jpg, not the .png this used to
+ * assume).
  *
  * There's no extension API to read Chrome's "Ask where to save each file"
  * setting, and if it's on, Chrome shows a native Save-As dialog per
@@ -125,10 +131,8 @@ function downloadResult(resultData, index) {
       return;
     }
 
-    const ext = resultData.mediaType === "video" ? "mp4" : "png";
-    const baseName = `${String(index + 1).padStart(3, "0")}.${ext}`;
+    const baseIndex = String(index + 1).padStart(3, "0");
     const folder = sanitizeFolderName(downloadFolderEl.value);
-    const filename = folder ? `${folder}/${baseName}` : baseName;
 
     let settled = false;
     const settle = () => {
@@ -145,10 +149,16 @@ function downloadResult(resultData, index) {
       settle();
     }, 8000);
 
-    chrome.downloads.download({ url: resultData.url, filename, saveAs: false }, () => {
-      clearTimeout(timeout);
-      settle();
-    });
+    chrome.runtime.sendMessage(
+      { target: "background", type: "DOWNLOAD_RESULT", payload: { url: resultData.url, folder, baseIndex } },
+      (response) => {
+        clearTimeout(timeout);
+        if (!response || !response.ok) {
+          setStatus(`Download failed: ${(response && response.error) || "no response from background"}`, "error");
+        }
+        settle();
+      }
+    );
   });
 }
 
