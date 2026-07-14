@@ -7,6 +7,42 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Auto-pause the queue when the Flow tab isn't focused
+
+- **Request**: the queue kept running even after switching away to another
+  tab or window, which risks Chrome's background-tab timer throttling
+  silently stalling or breaking a long unattended run — content scripts on a
+  tab that isn't the active tab of its window get their timers throttled by
+  Chrome, and the whole automation (`flow.js`'s `sleep()`s, its
+  `MutationObserver`-based result wait, etc.) runs there.
+  - Note: switching to another *app* (OS-level focus loss) while the Flow
+    tab stays the visible/active tab in its window does *not* trigger this —
+    that's not the condition Chrome's tab throttling actually keys off of,
+    only "is this the active tab of a window" is.
+- **Fix**: `background.js` now tracks whether the Flow project tab is the
+  active tab of the last-focused window via `chrome.tabs.onActivated` and
+  `chrome.windows.onFocusChanged` (the latter special-cased for
+  `WINDOW_ID_NONE`, i.e. focus left every Chrome window entirely, which a
+  `lastFocusedWindow`-based tab query wouldn't reliably reflect on its own).
+  On any actual transition it broadcasts `{target:"panel",
+  type:"FLOW_FOCUS_CHANGED", payload:{focused}}`.
+  - `sidepanel.js` had no `chrome.runtime.onMessage` listener at all before
+    this — the "panel" broadcast target existed in `background.js`'s
+    comments but nothing on the panel side ever consumed it. Added one,
+    tracking a new `focusPaused` flag kept deliberately separate from the
+    user's own `paused` (Pause button) flag, so neither clobbers the other:
+    regaining focus clears `focusPaused` but leaves a manual pause in place;
+    manually pausing while unfocused doesn't get silently cleared by a
+    refocus. Both queue wait loops (`runQueue()`, `delayWithCountdown()`)
+    now block on `paused || focusPaused`.
+  - Deliberately auto-*resumes* (not just auto-pauses) the moment the Flow
+    tab becomes the active tab again, rather than requiring a manual Start
+    click — matches the existing ask to not have to babysit the tab; the
+    pause is purely a defensive measure for the unattended-and-throttled
+    window, not a request for extra manual steps once back.
+- **Confirmed working** — auto-pause/resume behaves as expected when
+  switching tabs away from and back to the Flow project.
+
 ## 2026-07-14 — Fix side panel scroll clipping + drop false "missing character" flags
 
 - **Scroll bug**: content longer than the panel (queue items, character

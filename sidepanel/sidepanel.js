@@ -36,6 +36,12 @@ let queue = [];       // [{ text, status, matchedImages: [{id, characterName}] }
 let currentIndex = -1;
 let running = false;
 let paused = false;
+// Auto-pause driven by background.js's FLOW_FOCUS_CHANGED, distinct from the
+// user-controlled `paused` flag above so a manual pause isn't silently
+// cleared by regaining focus, and so a focus-driven pause doesn't flip the
+// Pause/Resume button's own state. The wait loops in delayWithCountdown()
+// and runQueue() block on either flag.
+let focusPaused = false;
 
 // Consistent Character feature — in-memory cache of uploaded character
 // records (kept in sync with IndexedDB via character-store.js) plus a
@@ -447,7 +453,7 @@ async function delayWithCountdown() {
 
   for (let remaining = delaySec; remaining > 0; remaining--) {
     if (!running) break;
-    while (paused) {
+    while (paused || focusPaused) {
       await sleep(300);
       if (!running) break;
     }
@@ -487,7 +493,7 @@ async function runQueue() {
 
   for (let i = 0; i < queue.length; i++) {
     if (!running) break;
-    while (paused) {
+    while (paused || focusPaused) {
       await sleep(300);
       if (!running) break;
     }
@@ -534,12 +540,36 @@ async function runQueue() {
 function resetControls() {
   running = false;
   paused = false;
+  focusPaused = false;
   startBtn.disabled = false;
   pauseBtn.disabled = true;
   stopBtn.disabled = true;
   updateClearButton();
   pauseBtn.textContent = "Pause";
 }
+
+/**
+ * Auto-pause/resume the queue as the Flow tab gains or loses "visible,
+ * active tab" status, per background.js's FLOW_FOCUS_CHANGED broadcast.
+ * Separate from the user's own Pause button (`paused`) so the two don't
+ * fight: if the user manually paused before switching away, regaining focus
+ * clears `focusPaused` but the manual `paused` flag still holds the queue,
+ * matching the wait loops' `paused || focusPaused` check.
+ */
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.target !== "panel" || message.type !== "FLOW_FOCUS_CHANGED") return;
+  if (!running) {
+    focusPaused = false;
+    return;
+  }
+  const wasFocusPaused = focusPaused;
+  focusPaused = !message.payload.focused;
+  if (focusPaused && !wasFocusPaused) {
+    setStatus("Paused — Flow tab isn't focused (avoiding background-tab throttling). Switch back to resume.", "idle");
+  } else if (!focusPaused && wasFocusPaused && !paused) {
+    setStatus("Flow tab focused again — resuming...", "running");
+  }
+});
 
 startBtn.addEventListener("click", () => {
   // If the current queue still has unfinished items (stopped partway

@@ -300,3 +300,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Messages from content script (target: "panel") are just broadcast as-is;
   // the side panel's own onMessage listener picks them up. Nothing to do here.
 });
+
+/**
+ * Notify the side panel whenever the Flow project tab's "visible, active
+ * tab" status changes, so the panel can auto-pause the queue while it's
+ * away — Chrome throttles timers in tabs that aren't the active tab of a
+ * window, and a long-running queue left generating against a throttled
+ * background tab can silently stall or misbehave. Only broadcasts on actual
+ * transitions (not every check) so the panel isn't spammed on every
+ * unrelated tab switch.
+ */
+let lastReportedFlowFocused = null;
+
+function checkAndBroadcastFocusState() {
+  findActiveFlowProjectTab().then(({ tab }) => {
+    const focused = !!tab;
+    if (focused === lastReportedFlowFocused) return;
+    lastReportedFlowFocused = focused;
+    chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused } });
+  });
+}
+
+chrome.tabs.onActivated.addListener(() => {
+  checkAndBroadcastFocusState();
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  // WINDOW_ID_NONE means focus left every Chrome window entirely (switched
+  // to another app, or Chrome was minimized) — lastFocusedWindow-based
+  // queries wouldn't reliably reflect that (it keeps remembering the last
+  // Chrome window that had focus), so treat it as unfocused directly rather
+  // than re-querying.
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    if (lastReportedFlowFocused !== false) {
+      lastReportedFlowFocused = false;
+      chrome.runtime.sendMessage({ target: "panel", type: "FLOW_FOCUS_CHANGED", payload: { focused: false } });
+    }
+    return;
+  }
+  checkAndBroadcastFocusState();
+});
