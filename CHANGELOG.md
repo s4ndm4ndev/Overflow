@@ -7,6 +7,27 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Fix uncaught "Could not establish connection" errors in background.js
+
+- **Report**: `chrome://extensions` error log showed repeated `Uncaught (in
+  promise) Error: Could not establish connection. Receiving end does not
+  exist.` from `background.js`.
+- **Root cause**: `checkAndBroadcastFocusState()` (added in the auto-pause
+  feature) calls `chrome.runtime.sendMessage({ target: "panel", type:
+  "FLOW_FOCUS_CHANGED", ... })` with no callback, both on the normal focus-
+  transition path and the `WINDOW_ID_NONE` (focus left Chrome entirely)
+  path. With no callback, MV3 returns a Promise instead of using the
+  callback+`lastError` pattern — and that promise rejects with this exact
+  message whenever there's no side panel open to receive the broadcast,
+  which is a completely normal state (user hasn't opened the panel, or just
+  closed it), not a real failure. Nothing caught the rejection, so it
+  surfaced as an uncaught error every time a tab/window focus change fired
+  while the panel was closed.
+- **Fix**: added `.catch(() => {})` to both `chrome.runtime.sendMessage(...)`
+  calls in `checkAndBroadcastFocusState()` in [background.js](background.js).
+  Purely swallows the expected "no receiver" case; doesn't change behavior
+  when the panel is actually open and listening.
+
 ## 2026-07-14 — Bump version to 1.0.0
 
 - Manifest was still at `0.1.0` despite the extension having a full feature
