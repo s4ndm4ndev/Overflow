@@ -6,6 +6,11 @@
 
 const promptsEl = document.getElementById("prompts");
 const promptFileEl = document.getElementById("prompt-file");
+const consistentCharacterToggleEl = document.getElementById("consistent-character-toggle");
+const consistentCharacterPanelEl = document.getElementById("consistent-character-panel");
+const characterDropzoneEl = document.getElementById("character-dropzone");
+const characterFileInputEl = document.getElementById("character-file-input");
+const characterListEl = document.getElementById("character-list");
 const delayMinEl = document.getElementById("delay-min");
 const delayMaxEl = document.getElementById("delay-max");
 const autoDownloadEl = document.getElementById("auto-download");
@@ -27,10 +32,168 @@ const blockingActionEl = document.getElementById("blocking-action");
 
 const FLOW_TOOL_URL = "https://labs.google/fx/tools/flow";
 
-let queue = [];       // [{ text, status }]
+let queue = [];       // [{ text, status, matchedImages: [{id, characterName}] }]
 let currentIndex = -1;
 let running = false;
 let paused = false;
+
+// Consistent Character feature — in-memory cache of uploaded character
+// records (kept in sync with IndexedDB via character-store.js) plus a
+// Map<id, objectURL> reused for both the upload panel's thumbnails and the
+// per-queue-item thumbnails in renderQueue(), so re-rendering the queue on
+// every status change never has to re-read IndexedDB.
+const SETTINGS_KEY = "overflow_settings";
+let characterRecords = []; // [{ id, characterName, fileName, mimeType, addedAt }]
+const characterThumbUrls = new Map();
+
+function loadSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(SETTINGS_KEY, (result) => resolve(result[SETTINGS_KEY] || {}));
+  });
+}
+
+function saveSettings(partial) {
+  loadSettings().then((current) => {
+    chrome.storage.local.set({ [SETTINGS_KEY]: { ...current, ...partial } });
+  });
+}
+
+async function refreshCharacterRecords() {
+  characterRecords = await CharacterStore.listCharacterImages();
+
+  const currentIds = new Set(characterRecords.map((r) => r.id));
+  for (const [id, url] of characterThumbUrls) {
+    if (!currentIds.has(id)) {
+      URL.revokeObjectURL(url);
+      characterThumbUrls.delete(id);
+    }
+  }
+
+  await Promise.all(
+    characterRecords
+      .filter((r) => !characterThumbUrls.has(r.id))
+      .map(async (r) => {
+        const blob = await CharacterStore.getCharacterImageBlob(r.id);
+        if (blob) characterThumbUrls.set(r.id, URL.createObjectURL(blob));
+      })
+  );
+
+  renderCharacterList();
+}
+
+function renderCharacterList() {
+  characterListEl.innerHTML = "";
+  characterRecords.forEach((record) => {
+    const li = document.createElement("li");
+
+    const img = document.createElement("img");
+    img.className = "character-thumb";
+    img.src = characterThumbUrls.get(record.id) || "";
+    img.alt = record.characterName;
+
+    const name = document.createElement("span");
+    name.className = "character-name";
+    name.textContent = record.characterName;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "character-remove";
+    removeBtn.textContent = "×";
+    removeBtn.title = `Remove ${record.characterName}`;
+    removeBtn.addEventListener("click", () => removeCharacterImage(record.id));
+
+    li.appendChild(img);
+    li.appendChild(name);
+    li.appendChild(removeBtn);
+    characterListEl.appendChild(li);
+  });
+}
+
+async function removeCharacterImage(id) {
+  await CharacterStore.removeCharacterImage(id);
+  await refreshCharacterRecords();
+}
+
+async function addCharacterFiles(fileList) {
+  const files = Array.from(fileList).filter((f) => f.type.startsWith("image/"));
+  for (const file of files) {
+    await CharacterStore.addCharacterImage(file);
+  }
+  if (files.length > 0) await refreshCharacterRecords();
+}
+
+consistentCharacterToggleEl.addEventListener("change", () => {
+  consistentCharacterPanelEl.hidden = !consistentCharacterToggleEl.checked;
+  saveSettings({ consistentCharacterEnabled: consistentCharacterToggleEl.checked });
+  if (consistentCharacterToggleEl.checked) refreshCharacterRecords();
+});
+
+characterDropzoneEl.addEventListener("click", () => characterFileInputEl.click());
+
+characterDropzoneEl.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  characterDropzoneEl.classList.add("dragover");
+});
+
+characterDropzoneEl.addEventListener("dragleave", () => {
+  characterDropzoneEl.classList.remove("dragover");
+});
+
+characterDropzoneEl.addEventListener("drop", (e) => {
+  e.preventDefault();
+  characterDropzoneEl.classList.remove("dragover");
+  addCharacterFiles(e.dataTransfer.files);
+});
+
+characterFileInputEl.addEventListener("change", () => {
+  addCharacterFiles(characterFileInputEl.files);
+  characterFileInputEl.value = ""; // allow re-selecting the same file later
+});
+
+// Restore the toggle + upload panel's persisted state on open (the first
+// real use of chrome.storage.local in this codebase — see README's
+// persistence gap note). The panel itself only becomes visible once the
+// toggle is on, per the existing hidden-attribute pattern used elsewhere
+// in this file (e.g. #download-settings-hint).
+loadSettings().then((settings) => {
+  consistentCharacterToggleEl.checked = !!settings.consistentCharacterEnabled;
+  consistentCharacterPanelEl.hidden = !consistentCharacterToggleEl.checked;
+  if (consistentCharacterToggleEl.checked) refreshCharacterRecords();
+});
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Failed to read an image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Resolve a queued item's matched character ids into the actual image data
+ * needed by flow.js's attachCharacterImage() — a data URL (since content
+ * scripts can't reach the side panel's IndexedDB directly) plus the
+ * original fileName (Flow echoes it back verbatim in its asset picker,
+ * which is how attachCharacterImage() finds the right uploaded asset among
+ * possibly several character images).
+ */
+async function resolveQueueImages(item) {
+  if (!item.matchedImages || item.matchedImages.length === 0) return [];
+  const images = [];
+  for (const match of item.matchedImages) {
+    const blob = await CharacterStore.getCharacterImageBlob(match.id);
+    if (!blob) continue;
+    const record = characterRecords.find((r) => r.id === match.id);
+    images.push({
+      characterName: match.characterName,
+      mimeType: blob.type,
+      dataUrl: await blobToDataUrl(blob),
+      fileName: (record && record.fileName) || `${match.characterName}.png`,
+    });
+  }
+  return images;
+}
 
 function setStatus(text, mode = "idle") {
   statusText.textContent = text;
@@ -58,11 +221,27 @@ function renderQueue() {
     const text = document.createElement("span");
     text.className = "item-text";
     text.textContent = item.text;
+    li.appendChild(dot);
+    li.appendChild(text);
+
+    if (item.matchedImages && item.matchedImages.length > 0) {
+      const thumbs = document.createElement("span");
+      thumbs.className = "item-thumbs";
+      item.matchedImages.forEach((match) => {
+        const url = characterThumbUrls.get(match.id);
+        if (!url) return;
+        const img = document.createElement("img");
+        img.className = "item-thumb-img";
+        img.src = url;
+        img.title = match.characterName;
+        thumbs.appendChild(img);
+      });
+      li.appendChild(thumbs);
+    }
+
     const badge = document.createElement("span");
     badge.className = `status-badge ${item.status}`;
     badge.textContent = STATUS_LABELS[item.status] || item.status;
-    li.appendChild(dot);
-    li.appendChild(text);
     li.appendChild(badge);
     queueListEl.appendChild(li);
   });
@@ -321,7 +500,8 @@ async function runQueue() {
     renderQueue();
     setStatus(`Running ${i + 1} of ${queue.length}...`, "running");
 
-    const result = await sendToContent("RUN_PROMPT", { text: queue[i].text });
+    const images = await resolveQueueImages(queue[i]);
+    const result = await sendToContent("RUN_PROMPT", { text: queue[i].text, images });
     queue[i].status = result.ok ? "done" : "error";
     renderQueue();
 
@@ -384,7 +564,12 @@ startBtn.addEventListener("click", () => {
       return;
     }
 
-    queue = lines.map((text) => ({ text, status: "pending" }));
+    queue = lines.map((text) => {
+      const match = consistentCharacterToggleEl.checked
+        ? CharacterMatcher.matchCharactersInText(text, characterRecords)
+        : { matched: [] };
+      return { text, status: "pending", matchedImages: match.matched };
+    });
   }
 
   renderQueue();

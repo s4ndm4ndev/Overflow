@@ -7,6 +7,116 @@ starts from real context instead of re-deriving it from diffs.
 
 Newest first.
 
+## 2026-07-14 — Fix side panel scroll clipping + drop false "missing character" flags
+
+- **Scroll bug**: content longer than the panel (queue items, character
+  list) couldn't be scrolled into view. Two fix attempts failed under live
+  testing before landing on the real cause: `.status-bar` being
+  `position: fixed` with no reserved space beneath it wasn't the core
+  issue — `html, body { height: 100% }` + `overflow-y: auto` on body did
+  nothing (percentage heights depend on the whole ancestor chain resolving
+  a height, unreliable inside the side panel host), and swapping to
+  `height: 100vh` on body *also* did nothing — confirming the Chrome side
+  panel host just doesn't reliably honor document/body-level overflow
+  scrolling at all, regardless of how body's height is computed. Fixed by
+  giving up on body-level scrolling entirely: `body` is now a fixed
+  `height: 100vh` flex column with `overflow: hidden` (never scrolls
+  itself), everything except the footer is wrapped in a new `#scroll-area`
+  div that's `flex: 1; min-height: 0; overflow-y: auto` (an explicit inner
+  scroll container, not reliant on the document's own scrolling), and
+  `.status-bar` dropped `position: fixed` in favor of just being the last
+  flex child — pinned to the bottom by layout instead of positioning. See
+  [sidepanel.html](sidepanel/sidepanel.html) and
+  [sidepanel.css](sidepanel/sidepanel.css).
+- **False "missing character" flags**: `character-matcher.js`'s `missing`
+  detection scanned prompt text for *any* ALL-CAPS 2+ letter token not in
+  the uploaded character list (e.g. `WIDE SHOT`, `CU`, `INT`) and flagged
+  it as a referenced-but-not-uploaded character. Scene-only prompts with no
+  intended character at all routinely contain capitalized camera/shot
+  directions, so this wrongly marked those prompts as errors. Removed the
+  ALL-CAPS heuristic entirely — `matchCharactersInText()` now only returns
+  `{ matched }` (positive matches against uploaded names, negation-aware as
+  before); there is no more speculative "missing" bucket. Removed the
+  now-dead `missingCharacters` plumbing from
+  [sidepanel.js](sidepanel/sidepanel.js) (queue item field, badge
+  rendering) and the `.missing-character-badge` rule from
+  [sidepanel.css](sidepanel/sidepanel.css).
+
+## 2026-07-14 — Consistent Character: upload reference images, auto-attach by name match
+
+- **New feature**: a "Consistent Character" toggle in the side panel. When
+  on, an upload panel appears (only then — hidden otherwise) where the user
+  drops in reference images named after characters (e.g. `narrator.png`).
+  Each queued prompt is scanned for character names; matched images are
+  uploaded to Flow and attached to the composer *before* the prompt text is
+  set, so the same character stays visually consistent across a batch
+  instead of drifting each generation. Number of images attached per
+  prompt equals the number of distinct characters that prompt references.
+- **Root discovery going in**: none of this existed yet — Overflow had no
+  image upload UI, no `chrome.storage` usage anywhere, and nothing in
+  `flow.js` drove Flow's own image-attach control (the "+" button was
+  found and explicitly filtered out as a false match, never used). This
+  was greenfield work, not a retrofit.
+- **Live-inspected Flow's actual attach-image UI** (same methodology as the
+  original prompt-composer/Generate-button work — see the two entries
+  below) before writing any selector code, using throwaway test PNGs
+  uploaded and trashed afterward, no lasting change to the test project:
+  - A plain `<input type="file" multiple accept="image/*">` already exists
+    in the DOM at all times — no React-controlled dropzone.
+  - The "+" button (icon ligature `add_2` — the same button
+    `findGenerateButton()` already had to filter out, sharing Generate's
+    hidden "Create" accessible name) opens an asset picker, not a direct
+    upload. The picker has a "Search assets" input, category filters,
+    "Upload media" (same hidden input), and "Add to Prompt" (attaches the
+    selected asset as a thumbnail chip in the composer).
+  - **Mixed result on `chrome.debugger`**: uploading via the hidden input
+    and clicking the "+" / "Add to Prompt" buttons all accept plain
+    synthetic events — confirmed live. But **selecting a specific tile in
+    the picker's list does not** — neither `.click()` nor a full
+    `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click` sequence
+    changed the selection or preview; only a genuinely trusted click did.
+    So tile selection reuses the existing `DEBUGGER_ATTACH`/`CLICK`/
+    `DETACH` round-trip `clickGenerateButton()` already used for Generate
+    — `background.js`'s `debuggerDispatchClick(tabId, x, y)` turned out to
+    be fully generic (arbitrary coordinates, nothing Generate-specific),
+    so it needed zero changes, just reuse.
+  - Multiple images attach as separate chips (confirmed with two uploads
+    at once) — matches the multi-character-per-prompt requirement
+    natively. Asset tiles expose their filename as plain text in the
+    picker DOM, which is how the correct tile gets found among several
+    uploaded characters (rather than trusting picker's default "Recent"
+    selection, which pointed at the wrong image as soon as a second
+    upload existed).
+  - The picker had to be scoped away from the project's background media
+    grid — it renders tiles with the *same* filename text at the same
+    time the picker is open, so an unscoped filename search matched the
+    wrong element. Fixed by scoping to the nearest common ancestor of the
+    picker's own "Search assets" input and "Upload media" button.
+- **Negation handling**: a prompt can say a character is explicitly
+  *absent* (e.g. `"No NARRATOR in frame."`). The matcher checks the 1-3
+  words immediately preceding a name, within the same sentence, against a
+  small negation-cue list (`no`, `not`, `without`, `excluding`, `minus`);
+  a fully-negated character is neither attached nor flagged as a missing
+  reference — flagging it would be noise, not a real problem, since the
+  prompt is deliberately excluding it.
+- **New files**: `sidepanel/character-store.js` (IndexedDB-backed image
+  store — chosen over `chrome.storage.local` since that API's ~10MB quota
+  isn't meant for binary blobs; images are downscaled to a 1024px long
+  edge on upload) and `sidepanel/character-matcher.js` (pure name-matching
+  logic, no `chrome.*`/DOM dependencies).
+- **Verified directly** (not just by inspection): 9 matcher test cases via
+  Node covering the exact negation example above, multi-character prompts,
+  dedup of repeated mentions, and sentence-scoped negation — all passing;
+  the full `CharacterStore` lifecycle (add/list/get/remove, including the
+  2048×1200 → 1024×600 downscale) exercised live against real IndexedDB;
+  and the blob → data URL → blob → File round trip that carries an image
+  from the side panel's IndexedDB to the content script's `attachCharacterImage()`,
+  confirmed byte-for-byte lossless. Loading the unpacked extension and
+  driving the side panel UI itself (toggle, drag-drop, a live queue run)
+  still needs a manual pass — `chrome://extensions` and the side panel
+  surface aren't reachable through the browser automation used for the
+  rest of this work.
+
 ## 2026-07-14 — Download naming/subfolder fix (route through onDeterminingFilename)
 
 - **Bug reports**: auto-download was saving files straight into the default

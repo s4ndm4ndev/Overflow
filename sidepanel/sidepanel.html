@@ -6,61 +6,77 @@
   <link rel="stylesheet" href="sidepanel.css" />
 </head>
 <body>
-  <header class="app-header">
-    <span class="logo-mark">≈</span>
-    <h1>Overflow</h1>
-  </header>
+  <div id="scroll-area">
+    <header class="app-header">
+      <span class="logo-mark">≈</span>
+      <h1>Overflow</h1>
+    </header>
 
-  <section class="panel">
-    <label for="prompts">Prompts <span class="hint">one per line</span></label>
-    <textarea id="prompts" placeholder="a red bicycle leaning against a brick wall&#10;a cup of coffee on a wooden desk&#10;..."></textarea>
+    <section class="panel">
+      <label for="prompts">Prompts <span class="hint">one per line</span></label>
+      <textarea id="prompts" placeholder="a red bicycle leaning against a brick wall&#10;a cup of coffee on a wooden desk&#10;..."></textarea>
 
-    <div class="file-upload-row">
-      <label for="prompt-file" class="file-upload-label">Or upload a .txt file</label>
-      <input type="file" id="prompt-file" accept=".txt" class="file-input" />
-    </div>
-
-    <div class="row">
-      <label>Delay between prompts</label>
-      <div class="delay-input">
-        <input type="number" id="delay-min" min="1" value="8" />
-        <span>to</span>
-        <input type="number" id="delay-max" min="1" value="20" />
-        <span>sec</span>
+      <div class="file-upload-row">
+        <label for="prompt-file" class="file-upload-label">Or upload a .txt file</label>
+        <input type="file" id="prompt-file" accept=".txt" class="file-input" />
       </div>
-    </div>
 
-    <div class="row">
-      <label for="auto-download">Auto-download results</label>
-      <input type="checkbox" id="auto-download" class="toggle-checkbox" />
-    </div>
+      <div class="row">
+        <label for="consistent-character-toggle">Consistent character <span class="hint">attach uploaded images by name match</span></label>
+        <input type="checkbox" id="consistent-character-toggle" class="toggle-checkbox" />
+      </div>
 
-    <div id="download-settings-hint" class="hint-banner" hidden>
-      If Chrome is set to "Ask where to save each file," every download will
-      pause the queue waiting for a manual click.
-      <button type="button" id="open-download-settings" class="link-button">Check Chrome's download settings</button>
-    </div>
+      <div id="consistent-character-panel" class="character-panel" hidden>
+        <div id="character-dropzone" class="dropzone">
+          <span>Click to upload or drag &amp; drop character images</span>
+          <span class="hint">PNG/JPG, named after the character (e.g. narrator.png)</span>
+        </div>
+        <input type="file" id="character-file-input" accept="image/*" multiple hidden />
+        <ul id="character-list" class="character-list"></ul>
+      </div>
 
-    <div class="folder-field">
-      <label for="download-folder">Download folder <span class="hint">optional subfolder in Downloads</span></label>
-      <input type="text" id="download-folder" placeholder="overflow-batch-1" value="overflow-batch-1" disabled />
-    </div>
+      <div class="row">
+        <label>Delay between prompts</label>
+        <div class="delay-input">
+          <input type="number" id="delay-min" min="1" value="8" />
+          <span>to</span>
+          <input type="number" id="delay-max" min="1" value="20" />
+          <span>sec</span>
+        </div>
+      </div>
 
-    <div class="controls">
-      <button id="start" class="primary">Start queue</button>
-      <button id="pause" class="secondary" disabled>Pause</button>
-      <button id="stop" class="secondary" disabled>Stop</button>
-      <button id="clear" class="secondary" disabled>Clear queue</button>
-    </div>
-  </section>
+      <div class="row">
+        <label for="auto-download">Auto-download results</label>
+        <input type="checkbox" id="auto-download" class="toggle-checkbox" />
+      </div>
 
-  <section class="panel queue-panel">
-    <div class="queue-header">
-      <h2>Queue</h2>
-      <span id="queue-progress" class="hint">0 / 0</span>
-    </div>
-    <ul id="queue-list"></ul>
-  </section>
+      <div id="download-settings-hint" class="hint-banner" hidden>
+        If Chrome is set to "Ask where to save each file," every download will
+        pause the queue waiting for a manual click.
+        <button type="button" id="open-download-settings" class="link-button">Check Chrome's download settings</button>
+      </div>
+
+      <div class="folder-field">
+        <label for="download-folder">Download folder <span class="hint">optional subfolder in Downloads</span></label>
+        <input type="text" id="download-folder" placeholder="overflow-batch-1" value="overflow-batch-1" disabled />
+      </div>
+
+      <div class="controls">
+        <button id="start" class="primary">Start queue</button>
+        <button id="pause" class="secondary" disabled>Pause</button>
+        <button id="stop" class="secondary" disabled>Stop</button>
+        <button id="clear" class="secondary" disabled>Clear queue</button>
+      </div>
+    </section>
+
+    <section class="panel queue-panel">
+      <div class="queue-header">
+        <h2>Queue</h2>
+        <span id="queue-progress" class="hint">0 / 0</span>
+      </div>
+      <ul id="queue-list"></ul>
+    </section>
+  </div>
 
   <footer class="status-bar">
     <span id="status-dot" class="dot idle"></span>
@@ -76,6 +92,8 @@
     </div>
   </div>
 
+  <script src="character-store.js"></script>
+  <script src="character-matcher.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

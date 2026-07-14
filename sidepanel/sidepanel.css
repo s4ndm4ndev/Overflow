@@ -13,13 +13,31 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * The Chrome side panel host doesn't reliably honor document/body-level
+ * overflow scrolling (confirmed live: neither `height: 100%` nor
+ * `height: 100vh` + `overflow-y: auto` on body actually scrolled). So body
+ * itself never scrolls — it's a fixed-height flex column — and #scroll-area
+ * below is an explicit inner scroll container that takes the remaining
+ * space after the status bar footer.
+ */
 body {
+  height: 100vh;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   line-height: 1.45;
+}
+
+#scroll-area {
+  flex: 1;
+  min-height: 0; /* let this shrink below its content's natural height so overflow-y can engage */
+  overflow-y: auto;
 }
 
 .app-header {
@@ -189,6 +207,103 @@ textarea:focus, input:focus {
   cursor: pointer;
 }
 
+.character-panel {
+  margin-top: 10px;
+}
+
+/* Same higher-specificity override needed as .blocking-overlay[hidden] —
+   author CSS setting display always beats the browser's built-in
+   [hidden] rule at equal specificity. */
+.character-panel[hidden] {
+  display: none;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  padding: 16px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dropzone:hover,
+.dropzone.dragover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.character-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.character-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.character-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.character-list .character-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  border-radius: 50%;
+  color: var(--text-dim);
+}
+
+.character-remove:hover:not(:disabled) {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+#queue-list .item-thumbs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.item-thumb-img {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
 .folder-field {
   margin-top: 12px;
 }
@@ -351,10 +466,7 @@ button.primary:hover:not(:disabled) {
 }
 
 .status-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;

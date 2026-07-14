@@ -105,6 +105,132 @@ function setPromptText(text) {
   });
 }
 
+// --- Consistent Character feature: attaching reference images to Flow's
+// composer before a prompt's text is set. Confirmed via live inspection
+// (see Changelog.md) that this needs a mix of plain synthetic events and
+// one genuinely trusted click, differently from both the text composer
+// (Slate/React fiber, main-world only) and the Generate button (trusted
+// click for everything).
+
+function findButtonsByIcon(ligature) {
+  return Array.from(document.querySelectorAll("button")).filter((b) => {
+    const icon = b.querySelector("i");
+    return icon && icon.textContent.trim() === ligature;
+  });
+}
+
+function findButtonByIcon(ligature) {
+  return findButtonsByIcon(ligature)[0] || null;
+}
+
+/**
+ * The composer's "+" attach-media button — the exact button
+ * findGenerateButton() above has to filter OUT (both share the same
+ * hidden "Create" accessible name), identified here by its own icon-font
+ * ligature instead. Confirmed via live inspection: opening it is a plain
+ * synthetic-click-friendly action, unlike Generate.
+ */
+function findAttachButton() {
+  return findButtonByIcon("add_2");
+}
+
+/** Number of reference images currently attached to the composer — each
+ * has a remove control with icon ligature "cancel". Used to confirm an
+ * attach actually landed, by comparing the count before/after. */
+function countAttachedChips() {
+  return findButtonsByIcon("cancel").length;
+}
+
+function getAncestors(el) {
+  const ancestors = [];
+  let cur = el;
+  while (cur) {
+    ancestors.push(cur);
+    cur = cur.parentElement;
+  }
+  return ancestors;
+}
+
+function commonAncestor(a, b) {
+  const ancestorsB = new Set(getAncestors(b));
+  for (const el of getAncestors(a)) {
+    if (ancestorsB.has(el)) return el;
+  }
+  return document.body;
+}
+
+/**
+ * The attach-image picker popup, located as the nearest common ancestor of
+ * its "Search assets" input and "Upload media" button — both stable,
+ * text-identified anchors, same philosophy as this file's icon-ligature
+ * lookups. Necessary because confirmed live: the project's background
+ * media grid renders tiles with the SAME filename text at the same time
+ * the picker is open, so an unscoped document-wide search for a filename
+ * can match the wrong (background) tile instead of the picker's own.
+ */
+function findAssetPickerContainer() {
+  const searchInput = Array.from(document.querySelectorAll("input")).find(
+    (i) => (i.placeholder || "").trim() === "Search assets"
+  );
+  const uploadMediaBtn = Array.from(document.querySelectorAll("button")).find((b) =>
+    (b.textContent || "").includes("Upload media")
+  );
+  if (!searchInput || !uploadMediaBtn) return null;
+  return commonAncestor(searchInput, uploadMediaBtn);
+}
+
+/**
+ * Within `root`, find the asset tile for `fileName`. Flow echoes an
+ * uploaded file's name back verbatim in its asset list (confirmed live),
+ * so an exact text match on a leaf element reliably identifies it; climb
+ * to the smallest ancestor at least ~60x60px to land on the actual
+ * clickable row rather than the bare text label.
+ */
+function findAssetTileByFileName(fileName, root) {
+  if (!root) return null;
+  const leaf = Array.from(root.querySelectorAll("*")).find(
+    (el) => el.children.length === 0 && el.textContent.trim() === fileName
+  );
+  if (!leaf) return null;
+  let el = leaf;
+  for (let i = 0; i < 8 && el; i++) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width >= 60 && rect.height >= 60) return el;
+    el = el.parentElement;
+  }
+  return leaf;
+}
+
+function findAddToPromptButton() {
+  return Array.from(document.querySelectorAll("button")).find((b) => b.textContent.trim() === "Add to Prompt");
+}
+
+/**
+ * Poll `check` until it returns a truthy value or `timeoutMs` elapses.
+ * Same shape as waitForGenerateButtonReady() below, generalized — used
+ * throughout attachCharacterImage() because every step here (upload
+ * landing in the asset list, the picker opening, the tile appearing)
+ * confirmed live to lag its trigger by a variable amount, not a fixed one.
+ */
+function waitFor(check, timeoutMs, intervalMs = 150) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const poll = () => {
+      const result = check();
+      if (result) {
+        resolve(result);
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        resolve(null);
+        return;
+      }
+      setTimeout(poll, intervalMs);
+    };
+    poll();
+  });
+}
+
 function isButtonDisabled(btn) {
   return btn.disabled || btn.getAttribute("aria-disabled") === "true";
 }
@@ -232,30 +358,19 @@ function sendToBackground(type, payload) {
 }
 
 /**
- * Click the Generate button via a genuinely trusted click, dispatched from
- * background.js over the Chrome DevTools Protocol.
- *
- * Confirmed via live testing that this button ignores every synthetic
- * trigger a content script can produce on its own: plain `.click()`, a full
- * `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click` sequence, and even
- * a synthetic Enter keydown on the composer — all silently did nothing. The
- * most likely explanation is that Flow deliberately gates the actual
- * generate action behind `isTrusted` input, since it's a real compute cost
- * per click — a reasonable anti-automation measure.
- *
- * Attach, measure, click, detach — IN THAT ORDER. An earlier version
- * measured the button's position first and attached+clicked afterward;
- * that silently failed every time on long prompts, because
- * chrome.debugger.attach() triggers Chrome's "is debugging this browser"
- * infobar, which reflows the entire page down by its own height (confirmed
- * by comparing screenshots taken right before/after it appears). Measuring
- * before attaching captures coordinates that are already wrong by the time
- * the click actually dispatches. Re-locating the button fresh here (rather
- * than accepting a passed-in reference) also avoids relying on a reference
- * that might have gone stale for unrelated reasons — see
- * waitForGenerateButtonReady() above.
+ * Dispatch a genuinely trusted click at whatever `locate()` finds, via
+ * chrome.debugger. `locate` is called fresh AFTER attaching — not given a
+ * static element up front — because chrome.debugger.attach() triggers
+ * Chrome's "is debugging this browser" infobar, which reflows the whole
+ * page down by its own height (confirmed live by comparing screenshots
+ * before/after it appears). Coordinates measured before attach point at
+ * the wrong place once that reflow has happened; re-locating here avoids
+ * ever acting on a pre-reflow (or otherwise stale) position. Shared by
+ * clickGenerateButton() and attachCharacterImage()'s tile-selection step —
+ * both confirmed live to need a real trusted click, unlike every other
+ * synthetic click in this file.
  */
-async function clickGenerateButton() {
+async function clickViaDebugger(locate, notFoundMessage) {
   const attachResponse = await sendToBackground("DEBUGGER_ATTACH");
   if (!attachResponse || !attachResponse.ok) {
     throw new Error((attachResponse && attachResponse.error) || "Failed to attach debugger.");
@@ -265,22 +380,76 @@ async function clickGenerateButton() {
     // Let the infobar's reflow fully settle before measuring anything.
     await sleep(150);
 
-    const btn = findGenerateButton();
-    if (!btn) throw new Error("Could not find the Generate button.");
-    const rect = btn.getBoundingClientRect();
+    const el = locate();
+    if (!el) throw new Error(notFoundMessage);
+    const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) {
-      throw new Error("Generate button has no visible size — likely detached from the page.");
+      throw new Error("Target element has no visible size — likely detached from the page.");
     }
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
     const clickResponse = await sendToBackground("DEBUGGER_CLICK", { x, y });
     if (!clickResponse || !clickResponse.ok) {
-      throw new Error((clickResponse && clickResponse.error) || "Failed to click the Generate button.");
+      throw new Error((clickResponse && clickResponse.error) || "Failed to click.");
     }
   } finally {
     await sendToBackground("DEBUGGER_DETACH");
   }
+}
+
+async function clickGenerateButton() {
+  await clickViaDebugger(findGenerateButton, "Could not find the Generate button.");
+}
+
+/**
+ * Upload a character reference image to Flow and attach it to the
+ * composer, ahead of the prompt text itself (see runPrompt()). Confirmed
+ * live: uploading through the hidden file input, opening the "+" picker,
+ * and clicking "Add to Prompt" all accept plain synthetic events — only
+ * selecting the specific tile needs a trusted click (see clickViaDebugger
+ * above), the same requirement as Generate's button.
+ */
+async function attachCharacterImage({ characterName, mimeType, dataUrl, fileName }) {
+  const blob = await fetch(dataUrl).then((r) => r.blob());
+  const file = new File([blob], fileName, { type: mimeType });
+
+  const input = document.querySelector('input[type="file"][accept*="image"]');
+  if (!input) throw new Error(`Could not find Flow's image upload input to attach ${characterName}.`);
+
+  const chipsBefore = countAttachedChips();
+
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+
+  const uploaded = await waitFor(() => findAssetTileByFileName(fileName, document), 20000, 300);
+  if (!uploaded) throw new Error(`Uploaded image for ${characterName} never appeared in Flow's asset list.`);
+
+  const attachBtn = findAttachButton();
+  if (!attachBtn) throw new Error("Could not find Flow's attach-image (+) button.");
+  attachBtn.click();
+
+  const tileReady = await waitFor(
+    () => findAssetTileByFileName(fileName, findAssetPickerContainer()),
+    5000,
+    200
+  );
+  if (!tileReady) throw new Error(`Could not find ${fileName} in Flow's attach picker.`);
+
+  await clickViaDebugger(
+    () => findAssetTileByFileName(fileName, findAssetPickerContainer()),
+    `Could not find ${fileName} in Flow's attach picker.`
+  );
+
+  const addToPromptBtn = await waitFor(findAddToPromptButton, 3000, 150);
+  if (!addToPromptBtn) throw new Error('Could not find the "Add to Prompt" button.');
+  addToPromptBtn.click();
+
+  const attached = await waitFor(() => countAttachedChips() > chipsBefore, 5000, 150);
+  if (!attached) throw new Error(`Failed to confirm ${characterName}'s image attached to the composer.`);
 }
 
 function sleep(ms) {
@@ -288,11 +457,19 @@ function sleep(ms) {
 }
 
 /**
- * Run a single prompt end-to-end: fill it in, click generate, wait for result.
+ * Run a single prompt end-to-end: attach any character reference images,
+ * fill in the text, click generate, wait for result. Images are attached
+ * BEFORE the text is set, matching the reference workflow this feature was
+ * modeled on (attach reference, then describe the scene).
  */
-async function runPrompt(text) {
+async function runPrompt(text, images = []) {
   const input = findPromptInput();
   if (!input) throw new Error("Could not find the prompt input on the page.");
+
+  for (const image of images) {
+    await attachCharacterImage(image);
+  }
+
   await setPromptText(text);
 
   const ready = await waitForGenerateButtonReady();
@@ -337,7 +514,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "RUN_PROMPT") {
-    runPrompt(message.payload.text)
+    runPrompt(message.payload.text, message.payload.images)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true; // async response
