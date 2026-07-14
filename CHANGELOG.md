@@ -5,6 +5,10 @@ to git does. This file is the running record of *why* things changed, not
 just what, so picking this up from a different machine (or a fresh session)
 starts from real context instead of re-deriving it from diffs.
 
+**Commit convention**: do not add a `Co-Authored-By: Claude ...` trailer to
+commit messages in this repo. A few earlier commits had one and had to be
+rewritten out of history to remove it — don't reintroduce it.
+
 Newest first.
 
 ## 2026-07-14 — Fix uncaught "Could not establish connection" errors in background.js
