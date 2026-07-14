@@ -11,6 +11,39 @@ rewritten out of history to remove it — don't reintroduce it.
 
 Newest first.
 
+## 2026-07-14 — Chrome Web Store MV3 pre-submission check: tighten manifest permissions
+
+- **Request**: final check before submitting to the Chrome Web Store.
+- **Found and fixed in [manifest.json](manifest.json)**:
+  - `scripting` permission removed — declared but never called anywhere;
+    both content scripts are injected declaratively via `content_scripts`,
+    not `chrome.scripting.executeScript`.
+  - `activeTab` permission removed — every `chrome.tabs.*` call
+    (`background.js`) only ever targets Flow tabs under
+    `https://labs.google/fx/*`, which `host_permissions` already grants
+    persistent access to; `activeTab`'s click-triggered grant added nothing.
+  - `host_permissions` narrowed from `https://labs.google/*` to
+    `https://labs.google/fx/*` to match what the content scripts and
+    `background.js`'s own tab-detection regexes actually scope to.
+  - Added `"minimum_chrome_version": "114"` — the `"world": "MAIN"`
+    content-script field needs Chrome 111+ and `sidePanel` needs 114+;
+    without this, installs on older Chrome would fail silently instead of
+    showing Chrome's own "not compatible" message.
+- **Flagged, not fixed (a judgment call, not a manifest defect)**: the
+  `debugger` permission is used to dispatch a genuinely trusted click that
+  bypasses Flow's own anti-automation gate on its Generate button (see the
+  2026-07-13 "Real Flow page automation" entry below for why it exists).
+  This is implemented cleanly — attach/click/detach wrapped in
+  `try/finally` in [content-scripts/flow.js](content-scripts/flow.js) so
+  the debugging session always releases — but `debugger` is one of the
+  Chrome Web Store's "powerful permissions" requiring a written
+  justification in the dashboard, and a reviewer may specifically question
+  a use case that defeats a site's own anti-bot gating on a Google product.
+  Left as-is at the user's direction; worth budgeting review time for.
+- **Confirmed working** — reloaded the unpacked extension with the
+  narrowed `host_permissions` and removed `activeTab`/`scripting`; tab
+  detection, queue automation, and downloads all behaved normally.
+
 ## 2026-07-14 — First alpha release: version scheme, `bump-version.js`, README rewrite
 
 - **Request**: mark this the first public alpha, with a version that "looks
