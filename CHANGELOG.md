@@ -5,15 +5,34 @@ to git does. This file is the running record of _why_ things changed, not
 just what, so picking this up from a different machine (or a fresh session)
 starts from real context instead of re-deriving it from diffs.
 
-<<<<<<< HEAD
-Newest first.
-
-=======
 **Commit convention**: do not add a `Co-Authored-By: Claude ...` trailer to
 commit messages in this repo. A few earlier commits had one and had to be
 rewritten out of history to remove it — don't reintroduce it.
 
 Newest first.
+
+## 2026-07-16 — Store listing title: "Overflow" → "Overflow for Google Flow"
+
+- **Request**: the bare "Overflow" title likely wasn't surfacing in Chrome
+  Web Store search for "Flow automation"-style queries; wanted the title to
+  reference Google Flow while keeping "Overflow" as the primary name.
+- **Changed in [manifest.json](manifest.json)**: `name` →
+  `"Overflow for Google Flow"` — this is what drives the Web Store listing
+  title once the update clears review. `short_name` and the toolbar
+  `action.default_title` were left as plain `"Overflow"`; those only render
+  in cramped UI (extensions menu, icon tooltip), not in search results.
+- **Version bumped** `1.0.0.0` → `1.0.0.1` via `bump-version.js build` — the
+  Web Store rejects a re-upload at a version number that's already
+  published, and this is a listing-metadata change with no functional code
+  touched, so the smallest segment was right.
+- **Packaged** `overflow-cws-package.zip` from only the manifest-referenced
+  files (`manifest.json`, `background.js`, `content-scripts/`,
+  `sidepanel/`, `icons/`) for upload through the existing Dashboard item's
+  Package tab — upload itself done by the user, not automated here.
+- **Also fixed**: an unresolved git merge conflict left in this file from
+  the `e46842d` merge (`<<<<<<<`/`=======` markers with no closing
+  `>>>>>>>`, just above this entry) — reconciled in favor of the side that
+  kept the commit-convention note.
 
 ## 2026-07-14 — Chrome Web Store MV3 pre-submission check: tighten manifest permissions
 
